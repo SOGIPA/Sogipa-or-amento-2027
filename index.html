@@ -828,8 +828,9 @@ body.dm-entrando .main{animation-delay:.06s;}
   white-space:nowrap;}
 .btn.sair{height:33px;}
 @media (max-width:720px){
-  .topuser{max-width:100%; font-size:12px;}
-  .topuser .tu-perfil{display:none;}
+  .topuser{max-width:100%;font-size:14px;}
+  .topuser .tu-nome{font-size:14px;}
+  .topuser .tu-perfil{display:inline-flex;font-size:10px;}
 }
 
 /* Botão de entrada enquanto autentica: a única adição de estilo na
@@ -844,7 +845,10 @@ body.dm-entrando .main{animation-delay:.06s;}
 .dm-ok{min-height:17px; margin-top:11px; font-size:11.5px; font-weight:600; color:#6fd79b; letter-spacing:.2px;}
 .dm-nota{margin-top:12px; font-size:11px; line-height:1.65; color:#7b88ae;}
 .dm-oculto{display:none !important;}
-#btSenha{height:33px;}
+#btSenha{display:none !important;} /* Acao voluntaria oculta; primeiro acesso permanece ativo. */
+.topuser{gap:12px;max-width:none;font-size:16px;align-items:center;}
+.topuser .tu-nome{font-size:16px;font-weight:800;color:var(--text);}
+.topuser .tu-perfil{font-size:11px;padding:4px 10px;color:#c3d2ff;border-color:rgba(140,175,255,.45);}
 @media (max-width:720px){ #btSenha{display:none;} }
 
 
@@ -2604,7 +2608,7 @@ tr.hoverable:hover>td{background:rgba(61,123,255,.06);}
     box.style.display = "";
     if (bt) bt.style.display = "";
     var bs1 = document.getElementById("btSenha");
-    if (bs1) bs1.style.display = "";
+    if (bs1) bs1.style.display = "none";
     box.innerHTML = '<span class="tu-nome">' + esc(id.linha) + "</span>" +
       (id.perfil ? '<span class="tu-perfil">' + esc(id.perfil) + "</span>" : "");
   }
@@ -27734,7 +27738,7 @@ var ESP_AGREGADO_DESPESA = {
     } else {
       faixaDRE = A.faixaSemFonte();
     }
-    var out = faixaDRE;
+    var out = ""; /* Avisos tecnicos preservados no diagnostico, ocultos da interface gerencial. */
     out += stitle("DRE Gerencial 2027",
       "com o orçamento construído pelas áreas · valores em R$ mil · cenário " + esc(S.cenario));
     out += cardsTopo(t);
