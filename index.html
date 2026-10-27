@@ -9662,8 +9662,21 @@ var APP = (function () {
     /* A reconciliação da matriz consolidada entra aqui, e não em
        Controles, porque as gerências de apoio não têm a aba Detalhes:
        em Controles ela ficaria inalcançável para oito das nove. */
+    /* ─── OS QUATRO BLOCOS DE RECONCILIAÇÃO FICAM OCULTOS ───
+       Ocultos na interface, a pedido: matriz consolidada de eventos e
+       benefícios, alerta de divergência, reconciliação por centro de custo e
+       registros para revisão. São exatamente, e só, o que paMatrizGerencia()
+       produz — conferido bloco a bloco.
+
+       A função continua inteira logo abaixo, com os dados, os filtros e os
+       cálculos intactos: basta remover o comentário desta linha para que os
+       quatro blocos voltem. Nada foi excluído.
+
+       Não foram envolvidos num display:none porque a marcação continuaria no
+       código-fonte da página publicada, com nome, matrícula e salário dentro
+       dela. Não renderizar é menor e não expõe. */
     return quadroLista(PP.pessoasDoQuadro(g), null, null, true, g.nome)
-      /* + paMatrizGerencia(g) */;   /* oculto — ver PA_RECONCILIACAO_OCULTA */
+      /* + paMatrizGerencia(g) */;
   }
   /* Um único componente de Quadro Atual, usado por gerências, Eventos e
      Locações. `nome` só muda o título; a estrutura é sempre a mesma. */
@@ -10087,32 +10100,10 @@ var APP = (function () {
   function paLinhaDelta(v) {
     return '<td class="num ' + (Math.abs(v) > 0.005 ? "desf" : "muted") + '">' + fmt(v) + "</td>";
   }
-  /* ─── RECONCILIAÇÃO OCULTA NO QUADRO ATUAL ───
-     Interruptor único de apresentação. Com ele ligado, os quatro blocos de
-     reconciliação não são gerados no Quadro Atual: matriz consolidada de
-     eventos e benefícios, alerta de divergência, reconciliação por centro de
-     custo e registros para revisão.
-
-     É só apresentação. Nada foi excluído: a função segue inteira abaixo, com
-     os dados, a reconciliação, as divergências e os cálculos intactos, e a
-     auditoria geral da importação continua na tela de consolidado de Pessoal,
-     onde paAuditoriaGeral() a publica. Para trazer os blocos de volta, basta
-     pôr este sinalizador em false — nenhuma outra alteração é necessária.
-
-     Não usei display:none porque a marcação continuaria dentro do código-fonte
-     da página publicada, levando nome, matrícula e salário com ela, e porque o
-     espaço reservado dos blocos ficaria vazio na tela. Não gerar é menor, não
-     expõe e não deixa buraco.
-
-     A guarda fica aqui dentro, e não só no ponto de chamada, para que nenhum
-     outro caminho de renderização — presente ou futuro — volte a exibi-los.
-     Serve também para conferir qual arquivo o navegador carregou: no console,
-     PA_RECONCILIACAO_OCULTA responde true neste arquivo e undefined em
-     qualquer versão anterior. */
-  window.PA_RECONCILIACAO_OCULTA = true;
-
   function paMatrizGerencia(g) {
-    if (window.PA_RECONCILIACAO_OCULTA) return "";
+    // Blocos tecnicos de reconciliacao ocultos por decisao de interface.
+    // Preservar a implementacao abaixo para auditoria e eventual reativacao.
+    return "";
     var PA = window.PESSOAL_PA27;
     if (!PA) return "";
     var linhas = PA.reconciliacao.porCC.filter(function (x) { return x.gerencia === g.nome; });
