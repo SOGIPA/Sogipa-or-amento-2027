@@ -2169,7 +2169,7 @@ tr.hoverable:hover>td{background:rgba(61,123,255,.06);}
     var uid = AUTH.user.id;
 
     return SB.from("perfis")
-      .select("id,nome,perfil,gerencia_id,ativo,cargo,acesso_global_leitura,pode_decidir,pode_administrar")
+      .select("id,nome,perfil,gerencia_id,ativo,cargo,acesso_global_leitura,pode_decidir,pode_administrar,troca_senha_obrigatoria")
       .eq("id", uid).maybeSingle()
       .then(function (r) {
         if (r && r.error) { AUTH.erro = r.error; avisar("perfis", r.error); return { ok: false, motivo: "perfil-erro" }; }
@@ -2286,7 +2286,7 @@ tr.hoverable:hover>td{background:rgba(61,123,255,.06);}
                SBDATA repinta quando a resposta chega. Falha aqui não
                derruba o login — vira estado de indisponibilidade na tela
                do módulo. */
-            if (window.SBDATA && typeof window.SBDATA.carregar === "function") {
+            if (!AUTH.deveTrocarSenha() && window.SBDATA && typeof window.SBDATA.carregar === "function") {
               try { window.SBDATA.carregar(); } catch (e) { avisar("sbdata", e); }
               if (typeof window.SBDATA.carregarDRE === "function") {
                 try { window.SBDATA.carregarDRE(); } catch (e) { avisar("sbdata:dre", e); }
@@ -2442,8 +2442,30 @@ tr.hoverable:hover>td{background:rgba(61,123,255,.06);}
       return SB.auth.updateUser({ password: String(nova) }).then(function (r) {
         if (r && r.error) { AUTH.erro = r.error; return { ok: false, mensagem: amigavelSenha(r.error) }; }
         if (r && r.data && r.data.user) AUTH.user = r.data.user;
-        AUTH.trocaPendente = false;
-        return { ok: true, mensagem: "Senha alterada." };
+        /* A atualização no Auth foi confirmada. A liberação do painel só
+           ocorre depois que o banco registra a conclusão para este UID. */
+        if (!AUTH.perfil || AUTH.perfil.troca_senha_obrigatoria !== true) {
+          AUTH.trocaPendente = false;
+          return { ok: true, mensagem: "Senha alterada." };
+        }
+        return SB.rpc("concluir_troca_senha_obrigatoria").then(function (confirmacao) {
+          if (confirmacao && confirmacao.error) {
+            AUTH.erro = confirmacao.error;
+            return { ok: false, mensagem: "A senha foi alterada, mas não foi possível confirmar a conclusão no cadastro. Entre novamente com a nova senha ou procure o administrador." };
+          }
+          if (!confirmacao || confirmacao.data !== true) {
+            return { ok: false, mensagem: "A senha foi alterada, mas a confirmação do cadastro não foi concluída. Entre novamente com a nova senha ou procure o administrador." };
+          }
+          AUTH.perfil.troca_senha_obrigatoria = false;
+          AUTH.trocaPendente = false;
+          if (window.SBDATA && typeof window.SBDATA.carregar === "function") {
+            try { window.SBDATA.carregar(); } catch (e) { avisar("sbdata:apos-senha", e); }
+            if (typeof window.SBDATA.carregarDRE === "function") {
+              try { window.SBDATA.carregarDRE(); } catch (e) { avisar("sbdata:dre:apos-senha", e); }
+            }
+          }
+          return { ok: true, mensagem: "Senha alterada." };
+        });
       })["catch"](function (e) {
         AUTH.erro = e; avisar("trocarSenha", e);
         return { ok: false, mensagem: amigavelSenha(e) };
@@ -2496,7 +2518,7 @@ tr.hoverable:hover>td{background:rgba(61,123,255,.06);}
     if (AUTH.trocaPendente === true) return true;
     var p = AUTH.perfil;
     if (!p) return false;
-    return p.senha_provisoria === true || p.trocar_senha === true
+    return p.troca_senha_obrigatoria === true || p.senha_provisoria === true || p.trocar_senha === true
       || p.senha_temporaria === true || p.primeiro_acesso === true;
   };
 
@@ -2794,7 +2816,13 @@ tr.hoverable:hover>td{background:rgba(61,123,255,.06);}
       return carregarContexto(s).then(function (c) {
         if (c.ok) {
           repintar();
-          if (window.ABERTURA && typeof window.ABERTURA.revelar === "function") window.ABERTURA.revelar();
+          if (AUTH.deveTrocarSenha()) {
+            if (window.ABERTURA && typeof window.ABERTURA.pedirNovaSenha === "function") {
+              window.ABERTURA.pedirNovaSenha("Primeiro acesso: defina a sua senha para continuar.");
+            }
+          } else if (window.ABERTURA && typeof window.ABERTURA.revelar === "function") {
+            window.ABERTURA.revelar();
+          }
           return;
         }
         /* Sessão válida com perfil que não libera: encerra e deixa a
