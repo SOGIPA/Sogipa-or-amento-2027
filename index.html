@@ -2865,6 +2865,408 @@ tr.hoverable:hover>td{background:rgba(61,123,255,.06);}
 })();
 </script>
 
+<script>
+/* ═══════════════ NAVPERM — VISIBILIDADE DO MENU POR PERMISSÃO ═══════════════
+
+   O que esta camada faz, e só isto: responde se um destino do menu pode
+   aparecer para o usuário autenticado. Ela não concede nada, não grava nada
+   e não conversa com o banco. Quem responde é o AUTH, que já leu
+   perfil_gerencias, perfil_modulos e as funções do próprio Supabase no
+   login. Aqui apenas se pergunta.
+
+   Ocultar item de menu é navegação, não segurança. As políticas RLS e as
+   RPCs continuam sendo a autorização de fato — um item escondido que fosse
+   alcançado por outro caminho ainda bateria na política do banco.
+
+   PADRÃO FECHADO. Enquanto AUTH não terminou de carregar, ou se a consulta
+   de permissões falhou, nada é liberado: o menu não mostra a lista de peças.
+   Preferiu-se menu vazio com aviso a menu cheio por omissão.
+
+   PONTE DE VOCABULÁRIO. O mesmo setor tem nomes diferentes no banco, na
+   planilha e na tela: "GERAL OPERACOES", "Operações"; "Comunicação",
+   "marketing". As tabelas abaixo são a cópia das grafias que o próprio
+   painel já declara (MAPA_GER e GER_POR_ID, no módulo de Pessoal de Apoio, e
+   os campos id/nome/area do catálogo de módulos). Não são lista de
+   permissão: não há nome de pessoa, e-mail nem id de usuário em nenhuma
+   delas. São sinônimos do mesmo setor, e o AUTH é que decide. Toda consulta
+   testa os sinônimos contra perfil_modulos E perfil_gerencias, porque um
+   mesmo item pode estar cadastrado como módulo para um perfil e como
+   gerência para outro — Associações é peça do painel e gerência no banco.
+
+   NAVPERM.diagnostico() lista, no console, cada destino do menu, se passou,
+   por qual sinônimo e por qual tabela. É por aí que se confere contra a
+   instância real sem precisar ler código. */
+(function () {
+  "use strict";
+
+  var NAVPERM = {};
+  window.NAVPERM = NAVPERM;
+
+  function A() { return window.AUTH || null; }
+
+  /* ── PADRÃO FECHADO ──
+     Este painel sempre filtra. A versão anterior desta função devolvia
+     falso quando o AUTH estava ausente ou incompleto, e nesse caso o menu
+     voltava a aparecer inteiro — ausência da camada de permissão liberava
+     tudo. Era o contrário do que se quer: quem não consegue perguntar não
+     deve autorizar.
+
+     Agora filtrando() é sempre verdadeiro, e quem responde se dá para
+     decidir é pronto(). Enquanto pronto() for falso — AUTH ausente,
+     incompleto, com erro, sessão expirada, perfil inativo ou carga ainda em
+     curso — nenhuma peça é liberada. */
+  NAVPERM.filtrando = function () { return true; };
+
+  NAVPERM.pronto = function () {
+    var a = A();
+    if (!a) return false;
+    /* A camada tem de estar completa: sem estes helpers não há o que
+       perguntar, e silêncio não é autorização. */
+    if (typeof a.podeVerGerencia !== "function") return false;
+    if (typeof a.podeVerModulo !== "function") return false;
+    if (typeof a.podeAdministrar !== "function") return false;
+    if (a.carregado !== true) return false;
+    if (a.erro) return false;
+    if (!a.perfil || a.perfil.ativo === false) return false;
+    /* Sessão viva: o próprio AUTH já guarda essa checagem, e ela cobre
+       token expirado, que de outro modo ficaria parecendo contexto válido. */
+    if (typeof a.autenticado === "function") {
+      try { if (a.autenticado() !== true) return false; } catch (e) { return false; }
+    }
+    return true;
+  };
+  NAVPERM.erro = function () {
+    var a = A();
+    return !!(a && (a.erro || (a.perfil && a.perfil.ativo === false)));
+  };
+
+  function leituraGlobal() {
+    var a = A();
+    return !!(a && a.perfil && a.perfil.acesso_global_leitura === true);
+  }
+  function administra() {
+    var a = A();
+    return !!(a && typeof a.podeAdministrar === "function" && a.podeAdministrar());
+  }
+  function decide() {
+    var a = A();
+    return !!(a && typeof a.podeDecidir === "function" && a.podeDecidir());
+  }
+
+  /* Estrutura sem tela (posição declarada na árvore, sem peça por trás)
+     aparece para quem lê o clube inteiro. Para os demais, é informação de
+     estrutura de outra área e fica fora. */
+  NAVPERM.podeEstrutura = function () {
+    return leituraGlobal() || administra();
+  };
+
+  /* ── sinônimos de gerência: nome do painel → grafias do banco e da planilha
+        e o id institucional. Cópia de MAPA_GER e GER_POR_ID. ── */
+  var GER_REF = {
+    "Gerência Geral":          ["GERAL", 2],
+    "Administrativa":          ["ADMINSTRATIVA", 1],
+    "Operações":               ["GERAL OPERACOES", 3],
+    "Esportes":                ["ESPORTES", 4],
+    "Manutenção":              ["MANUTENCAO", 5],
+    "RH":                      ["RH", "Recursos Humanos", 6],
+    "TI":                      ["TI", "Tecnologia da Informação", 7],
+    "Projetos e Obras":        ["PROJETOS E OBRAS", 8],
+    "Projetos e Planejamento": ["PROJETOS E PLANEJAMENTO", 9]
+  };
+
+  /* ── sinônimos de módulo: id do painel → nome e área do catálogo ── */
+  var MOD_REF = {
+    visaogeral:     ["visaogeral", "Visão Geral Consolidada", "dre", "DRE", "DRE Gerencial"],
+    pessoal:        ["pessoal", "Orçamento de Pessoal", "Pessoal de Apoio"],
+    eventos:        ["eventos", "Eventos"],
+    locacoes:       ["locacoes", "Locações e Eventos", "Locações", "Locações de Dependências"],
+    churrasqueiras: ["churrasqueiras", "Churrasqueiras", "Venda de Serviços"],
+    associacoes:    ["associacoes", "Associações"],
+    esportes:       ["esportes", "Esportes"],
+    marketing:      ["marketing", "Comunicação", "Marketing"],
+    economato:      ["economato", "Economato"],
+    estacionamento: ["estacionamento", "Estacionamento"],
+    dfo:            ["dfo", "Despesas de Funcionamento", "Despesas Fixas de Funcionamento"],
+    admin:          ["admin", "Configurações orçamentárias"]
+  };
+
+  /* Pergunta ao AUTH por cada sinônimo, nas duas tabelas. Devolve o que
+     respondeu sim — serve para o diagnóstico mostrar o caminho. */
+  /* ── POR QUE A CONSULTA É SEPARADA POR TABELA ──
+     Id numérico só significa algo dentro da própria tabela: o 5 é
+     Manutenção em gerencias e pode ser Eventos em modulos. Perguntar um id
+     de gerência ao cadastro de módulos faz a resposta de um autorizar o
+     outro — foi exatamente o que aconteceu num teste, e Manutenção e RH
+     apareceram no menu de quem só tinha Eventos e Locações.
+
+     Então: id numérico vai só para a tabela a que pertence. Nome vai para as
+     duas, porque nome é distintivo e um mesmo setor pode estar cadastrado
+     como módulo para um perfil e como gerência para outro — Associações é
+     peça do painel e gerência no banco. */
+  function ehId(r) { return typeof r === "number" || /^[0-9]+$/.test(String(r)); }
+
+  function consultarGer(refs) {
+    var a = A();
+    if (!a) return null;
+    for (var i = 0; i < refs.length; i++) {
+      var r = refs[i];
+      if (r === null || r === undefined || r === "") continue;
+      try { if (a.podeVerGerencia(r) === true) return { ref: r, via: "perfil_gerencias" }; }
+      catch (e) { }
+    }
+    return null;
+  }
+
+  function consultarMod(refs) {
+    var a = A();
+    if (!a) return null;
+    var i, r;
+    for (i = 0; i < refs.length; i++) {
+      r = refs[i];
+      if (r === null || r === undefined || r === "") continue;
+      try { if (a.podeVerModulo(r) === true) return { ref: r, via: "perfil_modulos" }; }
+      catch (e) { }
+    }
+    /* Segunda volta, só com os nomes: o item pode estar cadastrado como
+       gerência. Ids ficam de fora para não cruzarem de tabela. */
+    for (i = 0; i < refs.length; i++) {
+      r = refs[i];
+      if (r === null || r === undefined || r === "" || ehId(r)) continue;
+      try { if (a.podeVerGerencia(r) === true) return { ref: r, via: "perfil_gerencias" }; }
+      catch (e) { }
+    }
+    return null;
+  }
+
+  function refsGer(nome) {
+    var out = [nome];
+    /* O rótulo de tela é outro sinônimo legítimo, e vem do próprio painel. */
+    try {
+      var PP = window.PESSOAL, PV = window.PESSOAL_VIEW;
+      if (PP && PV && PP.PES) {
+        var g = PP.PES.gerencias.filter(function (x) { return x.nome === nome; })[0];
+        if (g) out.push(PV.rotuloGer(g));
+      }
+    } catch (e) { }
+    (GER_REF[nome] || []).forEach(function (x) { out.push(x); });
+    return out;
+  }
+  function refsMod(id) { return MOD_REF[id] || [id]; }
+
+  NAVPERM.podeGerencia = function (nome) {
+    if (!NAVPERM.pronto()) return false;
+    if (leituraGlobal() || administra()) return true;
+    return !!consultarGer(refsGer(nome));
+  };
+  NAVPERM.podeModulo = function (id) {
+    if (!NAVPERM.pronto()) return false;
+    if (id === "admin") return administra();
+    if (id === "visaogeral") return NAVPERM.podeVisaoGeral();
+    if (leituraGlobal() || administra()) return true;
+    return !!consultarMod(refsMod(id));
+  };
+
+  /* ── VISÃO GERAL E DRE CONSOLIDADA ───────────────────────────────────
+     A Visão Geral guarda a DRE do clube inteiro: é dado interno
+     consolidado, não a peça de uma área. Exige autorização institucional
+     destinada à leitura consolidada, e só ela:
+
+       acesso_global_leitura  — o campo que o painel já declara para
+                                leitura do clube inteiro;
+       pode_administrar       — perfil institucional, confirmado pela função
+                                usuario_pode_administrar() do banco;
+       vínculo explícito em perfil_modulos com o módulo da DRE.
+
+     pode_decidir FICOU FORA. Ele é permissão de APROVAR uma gerência ou um
+     módulo, e aprovar a peça da própria área não é razão para ler o
+     consolidado da SOGIPA. Na versão anterior ele entrava aqui, e isso
+     liberava a DRE a quem só decide sobre a própria área — ampliação
+     indevida, corrigida.
+
+     Nada foi concedido a ninguém: a liberação continua sendo feita no
+     cadastro de perfis, no banco. */
+  NAVPERM.podeVisaoGeral = function () {
+    if (!NAVPERM.pronto()) return false;
+    if (leituraGlobal() || administra()) return true;
+    return !!consultarMod(MOD_REF.visaogeral);
+  };
+
+  /* Destino de folha da árvore de navegação. */
+  NAVPERM.podeDest = function (d) {
+    if (!NAVPERM.pronto()) return false;
+    if (!d) return false;
+    var t = d[0];
+    if (t === "mod") return NAVPERM.podeModulo(d[1]);
+    if (t === "assoc") return NAVPERM.podeModulo("associacoes");
+    if (t === "esp" || t === "rub") return NAVPERM.podeModulo("esportes");
+    /* ["ger", nome, aba]: a área autoriza; e a peça operada dentro dela
+       (estacionamento, dfo) também autoriza por si, porque pode estar
+       cadastrada como módulo para quem não tem a gerência toda. */
+    if (NAVPERM.podeGerencia(d[1])) return true;
+    if (d[2] && MOD_REF[d[2]]) return NAVPERM.podeModulo(d[2]);
+    return false;
+  };
+
+  NAVPERM.gerenciasPermitidas = function () {
+    var PP = window.PESSOAL;
+    if (!PP || !PP.PES) return [];
+    if (!NAVPERM.pronto()) return [];
+    return PP.PES.gerencias.filter(function (g) { return NAVPERM.podeGerencia(g.nome); });
+  };
+
+  /* Ordem de preferência para o destino de retorno: a mais geral primeiro,
+     depois as peças, por último as áreas de pessoal. */
+  var ORDEM_MOD = ["associacoes", "locacoes", "churrasqueiras", "esportes",
+    "marketing", "eventos", "economato"];
+
+  NAVPERM.destinoSeguro = function () {
+    if (!NAVPERM.pronto()) return null;
+    if (NAVPERM.podeVisaoGeral()) return { modulo: "visaogeral", aba: "cockpit" };
+    for (var i = 0; i < ORDEM_MOD.length; i++) {
+      if (NAVPERM.podeModulo(ORDEM_MOD[i])) return { modulo: ORDEM_MOD[i] };
+    }
+    var gs = NAVPERM.gerenciasPermitidas();
+    if (gs.length) return { modulo: "pessoal", pGer: gs[0].id, pAba: "visao" };
+    return null;
+  };
+
+  /* ── PORTA DAS PEÇAS ──
+     Normaliza o estado antes de renderizar. Vale para clique, para botão de
+     atalho dentro de uma tela, para troca de usuário e para recarga: o
+     caminho de entrada não importa, o estado é conferido aqui.
+
+     bloqueado  — não há como confirmar permissão agora. Antes, este caso
+                  devolvia "nada a corrigir" e o conteúdo da peça era
+                  renderizado mesmo com o menu vazio: um gestor que perdesse
+                  a sessão no meio do uso continuava com a tela aberta, e na
+                  carga inicial o estado padrão é a Visão Geral, que é a DRE.
+                  Agora a tela de conteúdo também fica fechada.
+     semPecas   — permissões confirmadas, e nenhum destino autorizado. */
+  NAVPERM.corrigirEstado = function (S) {
+    var r = { mudou: false, semPecas: false, bloqueado: false, motivo: null };
+    if (!NAVPERM.pronto()) {
+      r.bloqueado = true;
+      r.motivo = NAVPERM.erro() ? "permissões não confirmadas" : "permissões ainda não carregadas";
+      return r;
+    }
+
+    var ok;
+    if (S.modulo === "pessoal") {
+      ok = S.pGer === "consolidado"
+        ? NAVPERM.podeVisaoGeral()
+        : (function () {
+            var g = null;
+            try { g = window.PESSOAL.gerById(S.pGer); } catch (e) { }
+            return g ? NAVPERM.podeGerencia(g.nome) : false;
+          })();
+    } else {
+      ok = NAVPERM.podeModulo(S.modulo);
+    }
+    if (ok) return r;
+
+    var d = NAVPERM.destinoSeguro();
+    if (!d) { r.semPecas = true; r.motivo = "nenhuma peça autorizada"; return r; }
+    r.mudou = true;
+    r.motivo = "destino não autorizado: " + S.modulo
+      + (S.modulo === "pessoal" ? " / " + S.pGer : "");
+    S.modulo = d.modulo;
+    if (d.aba) S.aba = d.aba;
+    if (d.pGer) S.pGer = d.pGer;
+    if (d.pAba) S.pAba = d.pAba;
+    /* O centro de custo selecionado é sempre descartado num redirecionamento,
+       e não só quando o destino é outra gerência. Um pCC que sobrava de uma
+       área não autorizada seria lido na próxima entrada em Pessoal, já dentro
+       de uma área permitida — nada vazaria, porque detalheCC resolve o centro
+       dentro da gerência corrente, mas a tela abriria num detalhe que o
+       usuário não pediu. Descartar é mais limpo e mais barato.
+
+       S.pGer pode continuar apontando para a área anterior quando o destino
+       não é Pessoal: ali ele não é lido, e esta mesma porta reconfere a
+       gerência em toda entrada no módulo de pessoal. */
+    S.pCC = null;
+    return r;
+  };
+
+  NAVPERM.telaSemPecas = function () {
+    var a = A();
+    var quem = a && a.perfil && a.perfil.nome ? String(a.perfil.nome) : "";
+    return '<div style="max-width:620px;margin:46px auto;padding:26px 28px;' +
+      'border:1px solid var(--linha,#2a2f3a);border-radius:10px;line-height:1.7">' +
+      '<div style="font-size:13px;letter-spacing:.08em;color:var(--neutro,#8b93a7)">ACESSO</div>' +
+      '<div style="font-size:19px;margin:6px 0 14px">Nenhuma peça orçamentária autorizada' +
+      (quem ? " para " + quem : "") + ".</div>" +
+      '<div style="font-size:13px;color:var(--neutro,#8b93a7)">' +
+      "O seu usuário está autenticado, e o sistema não encontrou nenhuma gerência " +
+      "ou módulo liberado para ele. Isto é resposta de permissão, não falha do " +
+      "sistema e não ausência de orçamento.<br><br>" +
+      "A liberação é feita no cadastro de perfis, pela Controladoria.</div></div>";
+  };
+
+  /* Tela do estado bloqueado: nem peça, nem menu, nem conteúdo, enquanto as
+     permissões efetivas não forem confirmadas. */
+  NAVPERM.telaAguardando = function () {
+    var falhou = NAVPERM.erro();
+    return '<div style="max-width:620px;margin:46px auto;padding:26px 28px;' +
+      'border:1px solid var(--linha,#2a2f3a);border-radius:10px;line-height:1.7">' +
+      '<div style="font-size:13px;letter-spacing:.08em;color:var(--neutro,#8b93a7)">ACESSO</div>' +
+      '<div style="font-size:19px;margin:6px 0 14px">' +
+      (falhou ? "Não foi possível confirmar as suas permissões."
+              : "Confirmando as suas permissões…") + "</div>" +
+      '<div style="font-size:13px;color:var(--neutro,#8b93a7)">' +
+      (falhou
+        ? "Nenhuma peça é liberada enquanto a confirmação não vier do banco. " +
+          "Isto é precaução de acesso, não ausência de orçamento. Recarregue a " +
+          "página; se persistir, a Controladoria precisa verificar a conexão " +
+          "com o banco e o cadastro do seu perfil."
+        : "As peças aparecem quando o banco confirmar as áreas e os módulos " +
+          "autorizados para o seu perfil.") + "</div></div>";
+  };
+
+  /* ── DIAGNÓSTICO ──
+     Para conferir contra a instância real: lista cada destino do menu, se
+     passou, por qual sinônimo e por qual tabela. Também compara a ponte de
+     nomes com a que o módulo de Pessoal declara, para que uma divergência
+     apareça em vez de ficar escondida. */
+  NAVPERM.diagnostico = function () {
+    var a = A();
+    var out = {
+      filtrando: NAVPERM.filtrando(), pronto: NAVPERM.pronto(),
+      erroNaConsulta: NAVPERM.erro(),
+      leituraGlobal: leituraGlobal(), administrar: administra(), decidir: decide(),
+      perfil: a && a.perfil ? a.perfil.perfil || a.perfil.nome : null,
+      gerenciasNoBanco: a ? (a.gerencias || []).length : 0,
+      modulosNoBanco: a ? (a.modulos || []).length : 0,
+      visaoGeralEdre: NAVPERM.podeVisaoGeral(),
+      gerencias: [], modulos: [], divergenciaDePonte: []
+    };
+    try {
+      window.PESSOAL.PES.gerencias.forEach(function (g) {
+        var c = consultarGer(refsGer(g.nome));
+        out.gerencias.push({ gerencia: g.nome, visivel: NAVPERM.podeGerencia(g.nome),
+          casouPor: c ? c.ref : null, tabela: c ? c.via : null });
+      });
+    } catch (e) { }
+    Object.keys(MOD_REF).forEach(function (id) {
+      var c = consultarMod(refsMod(id));
+      out.modulos.push({ modulo: id, visivel: NAVPERM.podeModulo(id),
+        casouPor: c ? c.ref : null, tabela: c ? c.via : null });
+    });
+    try {
+      var mapa = window.PESSOAL_PA27 && window.PESSOAL_PA27.MAPA_GER;
+      if (mapa) {
+        Object.keys(mapa).forEach(function (k) {
+          var nome = mapa[k], refs = GER_REF[nome] || [];
+          var tem = refs.some(function (x) { return String(x).toUpperCase() === k.toUpperCase(); });
+          if (!tem) out.divergenciaDePonte.push({ grafiaNoPainel: k, gerencia: nome,
+            aviso: "grafia declarada em MAPA_GER e ausente em GER_REF" });
+        });
+      }
+    } catch (e) { }
+    return out;
+  };
+})();
+</script>
+
 
 <script>window.LOGO="data:image/png;base64,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";</script>
 <script>/* Base DRE e séries do modelo. A chave quadroSocial saiu daqui: a
@@ -16512,6 +16914,28 @@ window.SOL_ACOES = function (cmd, render) {
   var IC_GER = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" width="17" height="17"><path d="M3 21h18"/><rect x="5" y="9" width="6" height="12"/><rect x="13" y="4" width="6" height="17"/></svg>';
   function renderNav() {
     var PES2 = window.PESSOAL.PES, PPx = window.PESSOAL;
+    /* ─── MENU POR PERMISSÃO ───
+       Antes de montar qualquer item: enquanto o banco não respondeu o que
+       este perfil pode ver, o menu não exibe a lista de peças. Mostrar a
+       árvore inteira por um instante e depois recolher seria entregar a
+       estrutura a quem não tem acesso a ela. Padrão fechado, inclusive
+       quando a consulta de permissões falha. */
+    var NP = window.NAVPERM || null;
+    /* Sem a camada, ou com ela sem resposta, o menu não lista peça alguma.
+       Ausência do verificador não é autorização. */
+    var semResposta = !NP || typeof NP.pronto !== "function" || !NP.pronto();
+    if (semResposta) {
+      var falhou = !!(NP && typeof NP.erro === "function" && NP.erro());
+      document.getElementById("nav").innerHTML =
+        '<div class="nav-group">' + (falhou ? "PERMISSÕES INDISPONÍVEIS" : "CARREGANDO PERMISSÕES") + "</div>" +
+        '<div style="padding:8px 12px;font-size:11px;color:var(--neutro);line-height:1.6">' +
+        (falhou
+          ? "Não foi possível confirmar o que este perfil pode ver. Nenhuma peça é liberada por omissão."
+          : "O menu aparece quando o banco confirmar as áreas e os módulos autorizados.") +
+        "</div>";
+      return;
+    }
+    function podeDest(d) { return NP.podeDest(d); }
     function item(mod, ativo, nome, ic, tag, attr, prof) {
       return '<button class="nav-item' + (ativo ? " active" : "") +
         (prof ? " n" + prof : "") + '" ' + attr + ">" +
@@ -16520,7 +16944,11 @@ window.SOL_ACOES = function (cmd, render) {
     }
     var IC_PECA = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" width="15" height="15"><circle cx="12" cy="12" r="3.2"/></svg>';
     var vg = V.modById("visaogeral");
-    var html = item("visaogeral", S.modulo === "visaogeral", "Visão Geral Consolidada", vg.ic, "", 'data-mod="visaogeral"');
+    /* A Visão Geral leva a DRE consolidada do clube: entra só para quem tem
+       autorização institucional declarada (ver NAVPERM.podeVisaoGeral). */
+    var html = NP.podeVisaoGeral()
+      ? item("visaogeral", S.modulo === "visaogeral", "Visão Geral Consolidada", vg.ic, "", 'data-mod="visaogeral"')
+      : "";
 
     /* Duas famílias na navegação: as gerências que operam peça própria e as
        quatro de Pessoal de Apoio, que operam por simulação e solicitação.
@@ -16574,21 +17002,38 @@ window.SOL_ACOES = function (cmd, render) {
       var filhos = no.filhos || [];
       if (!filhos.length) {
         if (no.dest) {
+          /* Peça sem autorização sai da árvore. Não entra desabilitada nem
+             como item apagado: quem não pode operá-la também não precisa
+             saber que ela existe. */
+          if (!podeDest(no.dest)) return "";
           return item("arv", ehAtivo(no.dest), no.nome, IC_PECA, "", alvoAttr(no.dest), prof);
         }
+        /* Posição declarada na estrutura, ainda sem tela. É estrutura
+           orçamentária, e a de área alheia só aparece para quem lê o clube
+           inteiro. */
+        if (!NP.podeEstrutura()) return "";
         return '<div class="nav-folha n' + prof + '" title="Peça prevista na estrutura, ainda sem tela">' +
           esc(no.nome) + "</div>";
       }
+      var vivos = 0;
       var dentro = filhos.map(function (f, i) {
-        return noArvore(f, chave + "." + i, prof + 1);
+        var h = noArvore(f, chave + "." + i, prof + 1);
+        if (h) vivos++;
+        return h;
       }).join("");
+      /* Grupo que perdeu todos os filhos por permissão sai junto: um grupo
+         vazio continuaria denunciando a existência do bloco. */
+      if (!dentro) return "";
       /* Grupo sem nenhuma peça com tela entra em tom apagado: continua na
          árvore e abre normalmente, mas não compete com o que já opera. */
       var temTela = (function achou(x) {
         if (x.dest) return true;
         return (x.filhos || []).some(achou);
       })(no);
-      return grupo(chave, esc(no.nome) + '<span class="nav-cont">' + filhos.length + "</span>",
+      /* A contagem passa a ser dos filhos que sobraram, não dos declarados:
+         um número maior que a lista visível seria uma pista do que foi
+         ocultado. */
+      return grupo(chave, esc(no.nome) + '<span class="nav-cont">' + vivos + "</span>",
         dentro, prof, !temTela);
     }
 
@@ -16687,14 +17132,22 @@ window.SOL_ACOES = function (cmd, render) {
       });
     } else if (tipo === "gerencias") {
       var PES2 = window.PESSOAL.PES, PPx = window.PESSOAL;
+      /* O trilho é a segunda porta de navegação, e listava todas as
+         gerências com o valor orçado de cada uma. Passa a listar as mesmas
+         que o menu — senão a área oculta reapareceria aqui, com número. */
+      var NPr = window.NAVPERM || null;
+      var gersR = (NPr && typeof NPr.gerenciasPermitidas === "function")
+        ? NPr.gerenciasPermitidas() : [];
       document.getElementById("railT").textContent = "GERÊNCIAS";
-      document.getElementById("railS").textContent = PES2.gerencias.length + " gerência(s) · " +
-        PES2.gerencias.reduce(function (s, g) { return s + g.ccs.length; }, 0) + " CC(s)";
-      html += '<button class="unit' + (S.pGer === "consolidado" ? " active" : "") + '" data-pger="consolidado">' +
-        '<span class="nm">SOGIPA — Consolidado</span><span class="vv">' +
-        fmt0(PES2.gerencias.reduce(function (s, g) { return s + PPx.orcamento(g).projetado; }, 0)) + "</span></button>";
-      if (PES2.gerencias.length) html += '<div class="rail-group">PEÇAS</div>';
-      PES2.gerencias.slice().sort(function (a, b) { return PPx.gerCusto(b) - PPx.gerCusto(a); }).forEach(function (g) {
+      document.getElementById("railS").textContent = gersR.length + " gerência(s) · " +
+        gersR.reduce(function (s, g) { return s + g.ccs.length; }, 0) + " CC(s)";
+      if (NPr && typeof NPr.podeVisaoGeral === "function" && NPr.podeVisaoGeral()) {
+        html += '<button class="unit' + (S.pGer === "consolidado" ? " active" : "") + '" data-pger="consolidado">' +
+          '<span class="nm">SOGIPA — Consolidado</span><span class="vv">' +
+          fmt0(PES2.gerencias.reduce(function (s, g) { return s + PPx.orcamento(g).projetado; }, 0)) + "</span></button>";
+      }
+      if (gersR.length) html += '<div class="rail-group">PEÇAS</div>';
+      gersR.slice().sort(function (a, b) { return PPx.gerCusto(b) - PPx.gerCusto(a); }).forEach(function (g) {
         var fail = PPx.checksFail(g);
         html += '<button class="unit' + (S.pGer === g.id ? " active" : "") + '" data-pger="' + g.id + '"' +
           (fail ? ' title="' + fail + ' controle(s) em REVISAR"' : "") + '>' +
@@ -16736,6 +17189,51 @@ window.SOL_ACOES = function (cmd, render) {
     if (!podeAdm) {
       S.modo = "gestor";
       if (S.modulo === "admin") { S.modulo = "visaogeral"; S.aba = "cockpit"; }
+    }
+    /* ─── PORTA DAS PEÇAS ───
+       Mesmo princípio da porta acima: uma checagem, um lugar. O estado é
+       conferido aqui, antes de resolver módulo e aba, não importa como se
+       chegou nele — clique no menu, atalho dentro de outra tela, troca de
+       usuário na mesma aba ou recarga da página. Peça que deixou de estar
+       autorizada devolve o usuário a um destino permitido.
+
+       Não substitui RLS: o banco continua decidindo o que entrega. Esta
+       porta impede a navegação; o que o banco entrega continua decidido
+       pelas políticas e pelas RPCs.
+
+       Se a própria camada NAVPERM não estiver disponível, o painel fecha em
+       vez de abrir: ausência do verificador não é autorização. */
+    var fechado = false, semPecas = false;
+    if (!window.NAVPERM || typeof window.NAVPERM.corrigirEstado !== "function") {
+      fechado = true;
+    } else {
+      var rp = window.NAVPERM.corrigirEstado(S);
+      semPecas = rp.semPecas === true;
+      fechado = rp.bloqueado === true;
+    }
+    if (fechado || semPecas) {
+      document.getElementById("topCtx").innerHTML = "";
+      document.getElementById("pageT").textContent = "Acesso";
+      document.getElementById("pageS").textContent = fechado
+        ? "Permissões não confirmadas" : "Nenhuma peça autorizada";
+      document.getElementById("main").innerHTML = fechado
+        ? (window.NAVPERM && window.NAVPERM.telaAguardando
+            ? window.NAVPERM.telaAguardando()
+            : '<div style="max-width:620px;margin:46px auto;line-height:1.7">' +
+              "Confirmando as suas permissões…</div>")
+        : window.NAVPERM.telaSemPecas();
+      document.getElementById("filterbar").innerHTML = "";
+      document.getElementById("subtabs").innerHTML = "";
+      document.getElementById("trilha").innerHTML = "";
+      document.getElementById("trilha").style.display = "none";
+      document.getElementById("drawer").innerHTML = "";
+      /* Selo e engrenagem seguem a mesma regra do fluxo normal: só existem
+         para quem administra, e aqui nunca é o caso. */
+      var pillS = document.getElementById("modoPill"), gearS = document.getElementById("gear");
+      if (pillS) { pillS.style.display = "none"; }
+      if (gearS) { gearS.style.display = podeAdm ? "" : "none"; }
+      renderNav(); renderRail(null); ajustaTopo();
+      return;
     }
     var m = V.modById(S.modulo), aba = m.abas.length ? V.abaById(m, S.aba) : null;
     if (aba && aba.id !== S.aba) S.aba = aba.id;
