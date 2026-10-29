@@ -3148,6 +3148,23 @@ tr.hoverable:hover>td{background:rgba(61,123,255,.06);}
     return PP.PES.gerencias.filter(function (g) { return NAVPERM.podeGerencia(g.nome); });
   };
 
+  /* ── id institucional de uma gerência do painel ──
+     As RPCs recebem p_gerencia_id bigint; o painel identifica a gerência por
+     "g3". A correspondência é a mesma já declarada em GER_REF, cópia do
+     GER_POR_ID do módulo de Pessoal. Confirmada contra os perfis informados
+     pela Controladoria: Junior em Operações = 3, Cíntia em RH = 6.
+     Devolve null quando não há correspondência — e null nunca é enviado ao
+     banco como se fosse um id. */
+  NAVPERM.idInstitucional = function (nomeOuGerencia) {
+    var nome = nomeOuGerencia && nomeOuGerencia.nome ? nomeOuGerencia.nome : nomeOuGerencia;
+    var refs = GER_REF[nome] || [];
+    for (var i = 0; i < refs.length; i++) {
+      if (typeof refs[i] === "number") return refs[i];
+      if (/^[0-9]+$/.test(String(refs[i]))) return Number(refs[i]);
+    }
+    return null;
+  };
+
   /* Ordem de preferência para o destino de retorno: a mais geral primeiro,
      depois as peças, por último as áreas de pessoal. */
   var ORDEM_MOD = ["associacoes", "locacoes", "churrasqueiras", "esportes",
@@ -4196,6 +4213,16 @@ var APP = (function () {
     /* Fluxo oficial: gestor → Gerente Geral → decisão. Um único estado entre
        o envio e a decisão, apresentado com o nome mais claro para o usuário. */
     { id: "sol_enviada", nome: "Aguardando decisão do Gerente Geral", cls: "aprovacao", campo: null },
+    /* ─── DESLIGAMENTO: A ETAPA DO RH ───
+       Estado criado no banco, não aqui. O gatilho pa_2027_rh_rotear_trg, na
+       tabela pa_2027_solicitacoes, desvia a solicitação de desligamento para
+       cá no momento da gravação: pa_2027_salvar continua tendo sol_enviada
+       como destino inicial, e quem desvia é o gatilho. Por isso o painel
+       RELÊ o registro depois de salvar, em vez de supor o status.
+
+       Daqui só se sai por pa_2027_rh_analisar: validar leva a sol_enviada,
+       liberando a decisão do Gerente Geral; devolver leva a sol_ajuste. */
+    { id: "sol_aguardando_rh", nome: "Aguardando validação do RH", cls: "validacao", campo: null },
     /* Estados legados, mantidos só para que históricos antigos continuem legíveis.
        Nenhuma transição nova os produz. */
     { id: "sol_analise", nome: "Em análise (legado)", cls: "validacao", campo: null },
@@ -7397,7 +7424,11 @@ var APP = (function () {
      Reprovada também fica de fora: está encerrada.
      Os estados legados seguem contando como pendentes para não perder
      solicitações antigas que porventura estejam neles. */
-  var PENDENTES = ["sol_enviada", "sol_analise", "sol_validada", "sol_aguardando", "sol_ajuste"];
+  /* sol_aguardando_rh entra aqui: a solicitação de desligamento já saiu das
+     mãos do gestor e ainda não teve decisão final — é pedido em curso. Sem
+     isto, um desligamento parado no RH desapareceria das contagens. */
+  var PENDENTES = ["sol_enviada", "sol_aguardando_rh", "sol_analise", "sol_validada",
+    "sol_aguardando", "sol_ajuste"];
   function ePendente(s) { return PENDENTES.indexOf(s.status) >= 0; }
   function eRascunho(s) { return s.status === "sol_rascunho"; }
   function eAprovada(s) { return s.status === "sol_aprovada"; }
@@ -7809,14 +7840,22 @@ var APP = (function () {
 
   function transicoes(s) {
     switch (s.status) {
-      case "sol_rascunho": return ["sol_enviada"];
+      /* O desligamento sai do rascunho para o RH, não para o Gerente Geral:
+         quem decide o destino é o gatilho do banco, e esta tela apenas
+         reflete o status que a releitura trouxe. Os outros tipos seguem
+         direto para a decisão, como antes. */
+      case "sol_rascunho": return ["sol_enviada", "sol_aguardando_rh"];
+      /* Etapa do RH: daqui só se sai por pa_2027_rh_analisar — validar leva
+         à decisão do Gerente Geral, devolver volta ao gestor. */
+      case "sol_aguardando_rh": return ["sol_enviada", "sol_ajuste"];
       /* Um único estado aguardando decisão: o Gerente Geral aprova,
          pede ajuste ou reprova. Sem etapa intermediária. */
       case "sol_enviada":
       case "sol_analise":
       case "sol_validada":
       case "sol_aguardando": return ["sol_aprovada", "sol_ajuste", "sol_reprovada"];
-      case "sol_ajuste": return ["sol_enviada"];
+      /* Reenvio de desligamento volta ao RH, não ao Gerente Geral. */
+      case "sol_ajuste": return ["sol_enviada", "sol_aguardando_rh"];
       default: return [];  /* aprovada e reprovada não retrocedem */
     }
   }
@@ -11838,6 +11877,22 @@ var APP = (function () {
     var lista = SO.filtrar({ gerenciaId: g.id });
     var out = "";
 
+    /* ─── FILA DO RH ───
+       Entra no alto desta aba, e nao numa sub-aba nova, para nao mexer na
+       navegacao ja validada. Aparece so para quem pode analisar; a lista vem
+       de pa_2027_listar, que devolve apenas o que o perfil pode ver, e cobre
+       TODAS as gerencias — por isso o bloco nao e filtrado por g. A carga e
+       disparada aqui e a tela repinta quando o banco responde. */
+    var D = window.DESLIGAMENTO;
+    if (D && typeof D.podeAnalisar === "function" && D.podeAnalisar()) {
+      if (D.estadoFila === "nao-carregada") {
+        D.carregarFila(function () {
+          if (typeof window.render === "function") { try { window.render(); } catch (e) { } }
+        });
+      }
+      out += D.telaFilaRH() + '<div class="gap"></div>';
+    }
+
     out += '<div class="row" style="margin-bottom:18px">' +
       '<button class="btn pri" data-sacao="nova">+ Nova solicitação</button>' +
       '<span class="muted" style="font-size:12.5px">' +
@@ -12066,9 +12121,9 @@ var APP = (function () {
         '"><small class="dica">remuneração, adicionais, benefícios, encargos e provisão — da matriz</small></div>';
     }
     if (SO.usa(tipo, "rescisao")) {
-      f += campo("soRescisao", "Valor estimado da rescisão (R$)", "money", "");
-      f += '<div class="field full dica-full">Valor informado pelo RH ou pela fonte institucional. ' +
-        "O painel não calcula verbas rescisórias.</div>";
+      f += campo("soRescisao", "Estimativa de rescisão (opcional; RH confirmará)", "money", "");
+      f += '<div class="field full dica-full">O gestor pode deixar este campo vazio. ' +
+        "O RH informará o valor da rescisão antes de encaminhar ao Gerente Geral. O painel não calcula verbas rescisórias.</div>";
     }
     if (SO.usa(tipo, "reposicao")) {
       f += '<div class="field full"><label class="check"><input type="checkbox" id="soTemRep"' +
@@ -12541,8 +12596,7 @@ function validarSolicitacao(d) {
   if (window.SOLICITACOES.usa(d.tipo, "adicionais") && t.regra === "adicional" && !d.adicionais)
     return marcarErro("soAdic", "Preencha o campo Adicionais para enviar a solicitação.");
   if (t.regra === "saida") {
-    if (!d.rescisaoValor)
-      return marcarErro("soRescisao", "Informe o valor estimado da rescisão, fornecido pelo RH.");
+    /* A rescisão é informada e validada pelo RH na etapa seguinte. */
     if (d.temReposicao && (d.salarioReposicao === null || d.salarioReposicao === undefined || !d.salarioReposicao))
       return marcarErro("soSalRep", "Informe o salário do substituto para calcular a economia líquida.");
     if (d.temReposicao && d.mesReposicao && d.mesReposicao < d.mesInicio)
@@ -12551,6 +12605,60 @@ function validarSolicitacao(d) {
   if (!d.justificativa)
     return marcarErro("soJust", "Preencha o campo Justificativa para enviar a solicitação.");
   return true;
+}
+
+/* ── Auxiliares do fluxo de desligamento ──
+   Ficam aqui, ao lado do despachante, porque e o unico lugar que os usa. */
+function ehDeslig(x) {
+  var D = window.DESLIGAMENTO;
+  return !!(D && D.eDesligamento(x));
+}
+function enviarDesligamento(s, dados, render) {
+  var A = APP, S = A.state, SO = window.SOLICITACOES, D = window.DESLIGAMENTO;
+  if (!D) { alert("Camada de desligamento indisponivel nesta build."); return; }
+  var g = null;
+  try { g = window.PESSOAL.gerById(s.gerenciaId || S.sGerAtual || S.pGer); } catch (e) { g = null; }
+  var gid = g && window.NAVPERM ? window.NAVPERM.idInstitucional(g.nome) : null;
+  /* Checagem local de pertencimento: a RPC ainda valida a gerência do gestor.
+     Não confiar apenas no identificador enviado pelo formulário. */
+  var colaboradorId = dados && dados.colaboradorId;
+  var pertence = false;
+  if (g && colaboradorId) (g.ccs || []).forEach(function (cc) {
+    (cc.colaboradores || []).forEach(function (c) {
+      if (String(c.id) === String(colaboradorId)) pertence = true;
+    });
+  });
+  if (!pertence || !g || !window.NAVPERM ||
+      typeof window.NAVPERM.podeGerencia !== "function" ||
+      window.NAVPERM.podeGerencia(g.nome) !== true) {
+    alert("Colaborador fora da equipe autorizada ou quadro não carregado. O desligamento NÃO foi enviado.");
+    render(); return;
+  }
+  if (gid === null || gid === undefined) {
+    alert("Nao foi possivel identificar a gerencia para o banco. O desligamento NAO foi enviado.");
+    render(); return;
+  }
+  S.solEnviando = s.id; S.solMensagem = null; render();
+  D.enviar(dados, gid).then(function (res) {
+    S.solEnviando = null;
+    S.solMensagem = { id: s.id, ok: res.ok, texto: res.mensagem || "" };
+    if (res.ok && res.confirmado && res.status) {
+      s.idBanco = res.id || null;
+      var rt = SO.REPO.registrarTransicao(s.id, res.status,
+        res.status === "sol_aguardando_rh"
+          ? "Enviada ao RH para informar a rescisao (banco)."
+          : "Enviada (banco). Status: " + res.status + ".");
+      if (!rt.ok) S.solMensagem.texto += " Observacao local: " + rt.erro;
+      S.drawer = null; S.sGerAtual = null; S.pAba = "solicitacoes";
+    }
+    render();
+  })["catch"](function (e) {
+    S.solEnviando = null;
+    S.solMensagem = { id: s.id, ok: false,
+      texto: "Falha ao falar com o banco: " + ((e && e.message) || "erro desconhecido") +
+             ". A solicitacao continua em rascunho." };
+    render();
+  });
 }
 
 window.SOL_ACOES = function (cmd, render) {
@@ -12613,9 +12721,12 @@ window.SOL_ACOES = function (cmd, render) {
     if (!validarSolicitacao(d)) return;
     var c = SO.calcular(d);
     if (!c.conclusivo && SO.tipoById(d.tipo).regra !== "reposicao") { alert(c.motivo); return; }
-    /* Persistência centralizada: hoje memória da sessão, amanhã backend. */
     var s = SO.REPO.salvarSolicitacao(d);
     if (k[0] === "criar-enviar") {
+      /* DESLIGAMENTO: vai pelo banco. O status local passa a ser o que a
+         releitura trouxe, e enquanto o banco nao confirma a solicitacao
+         fica em rascunho — a tela nao diz "enviada" por conta propria. */
+      if (ehDeslig(d)) { enviarDesligamento(s, d, render); return; }
       var r0 = SO.REPO.registrarTransicao(s.id, "sol_enviada", "Enviada ao Gerente Geral");
       if (!r0.ok) { alert(r0.erro); return; }
     }
@@ -12624,9 +12735,46 @@ window.SOL_ACOES = function (cmd, render) {
     render(); return;
   }
   if (k[0] === "enviar") {
+    var sEnv = SO.porId(k[1]);
+    if (sEnv && ehDeslig(sEnv)) { enviarDesligamento(sEnv, sEnv, render); return; }
     var r = SO.REPO.registrarTransicao(k[1], "sol_enviada", "Enviada ao Gerente Geral");
     if (!r.ok) alert(r.erro);
     render(); return;
+  }
+  /* ── ANALISE DO RH ──
+     Validar exige o valor da rescisao; devolver exige justificativa. As duas
+     vao a pa_2027_rh_analisar, e o resultado e lido por releitura: a tela so
+     muda depois que o banco muda. */
+  if (k[0] === "rh-validar" || k[0] === "rh-devolver") {
+    var D = window.DESLIGAMENTO;
+    if (!D) { alert("Camada de desligamento indisponivel nesta build."); return; }
+    var idRH = k[1];
+    var campo = document.getElementById("rhRescisao-" + idRH);
+    var justi = document.getElementById("rhCom-" + idRH);
+    var vRes = campo ? campo.value : "";
+    var vCom = justi ? justi.value : "";
+    S.rhProcessando = idRH; render();
+    var acao = k[0] === "rh-validar"
+      ? D.validar(idRH, vRes, vCom)
+      : D.devolver(idRH, vCom);
+    acao.then(function (res) {
+      S.rhProcessando = null;
+      S.rhMensagem = { id: idRH, ok: res.ok, texto: res.mensagem || "" };
+      if (res.ok) {
+        var loc = SO.porId(idRH);
+        if (loc && res.status) {
+          SO.REPO.registrarTransicao(idRH, res.status,
+            k[0] === "rh-validar" ? "RH validou e informou a rescisao." : "RH devolveu ao gestor.");
+        }
+      }
+      render();
+    })["catch"](function (e) {
+      S.rhProcessando = null;
+      S.rhMensagem = { id: idRH, ok: false,
+        texto: "Falha ao falar com o banco: " + ((e && e.message) || "erro desconhecido") };
+      render();
+    });
+    return;
   }
   if (k[0] === "excluir") {
     if (!SO.REPO.excluirSolicitacao(k[1])) alert("Só é possível excluir solicitação em rascunho ou com ajuste solicitado.");
@@ -12640,6 +12788,28 @@ window.SOL_ACOES = function (cmd, render) {
   if (k[0] === "dec") { S.drawer = "sol-dec:" + k[1] + ":" + k[2]; render(); return; }
   if (k[0] === "conf") {
     var com = (document.getElementById("soCom") || {}).value || "";
+    var sDec = SO.porId(k[2]);
+    if (sDec && ehDeslig(sDec)) {
+      if (!sDec.idBanco) {
+        alert("Desligamento sem UUID confirmado no banco. A decisão não pode ser registrada localmente.");
+        return;
+      }
+      var mapaDec = { sol_aprovada: "aprovar", sol_reprovada: "reprovar", sol_ajuste: "ajuste" };
+      var dec = mapaDec[k[1]];
+      if (!dec) { alert("Decisão não reconhecida para desligamento."); return; }
+      window.SBDATA.SOL.decidirPA(sDec.idBanco, dec, com).then(function (r) {
+        if (!r.ok) { alert(r.mensagem || "O banco não aceitou a decisão."); return; }
+        return window.SBDATA.SOL.relerPA(sDec.idBanco).then(function (rl) {
+          if (!rl.ok || rl.status !== k[1]) {
+            alert("A decisão não foi confirmada na releitura do banco. Verifique o registro antes de prosseguir.");
+            return;
+          }
+          SO.REPO.registrarDecisao(k[2], k[1], com);
+          S.drawer = "sol-ver:" + k[2]; render();
+        });
+      })["catch"](function (e) { alert("Falha ao registrar decisão: " + (e.message || e)); });
+      return;
+    }
     var res = SO.REPO.registrarDecisao(k[2], k[1], com);
     if (!res.ok) { alert(res.erro); return; }
     S.drawer = "sol-ver:" + k[2];
@@ -23800,10 +23970,21 @@ if (typeof APP !== "undefined" && APP) {
           /* Confirmação por releitura: a gravação só é reportada como feita
              se a listagem do banco devolver o registro. */
           return SOL.listarPA().then(function (l) {
-            var achou = !!(novo && l.itens.some(function (x) {
-              return String(x && (x.id || x.uuid)) === String(novo);
-            }));
-            return { ok: true, id: novo || null, confirmado: achou,
+            var reg = null;
+            if (novo) {
+              for (var i = 0; i < l.itens.length; i++) {
+                var x = l.itens[i];
+                if (x && String(x.id || x.uuid) === String(novo)) { reg = x; break; }
+              }
+            }
+            var achou = !!reg;
+            /* O STATUS VEM DA RELEITURA, nunca de suposição. O gatilho
+               pa_2027_rh_rotear_trg pode ter desviado um desligamento para
+               sol_aguardando_rh depois que pa_2027_salvar gravou com
+               sol_enviada, e só o banco sabe onde o registro parou. */
+            return { ok: achou, id: novo || null, confirmado: achou,
+              registro: reg, status: reg ? (reg.status || null) : null,
+              versao: reg ? (reg.versao === undefined ? null : reg.versao) : null,
               mensagem: achou ? "Solicitação gravada e confirmada no banco."
                 : "A gravação foi aceita, mas a releitura não encontrou o registro. Confira antes de prosseguir." };
           });
@@ -23814,8 +23995,12 @@ if (typeof APP !== "undefined" && APP) {
         return Promise.resolve({ ok: false,
           mensagem: "Identificador de solicitação de Pessoal inválido: esperado UUID." });
       }
+      /* O contrato declara p_comentario text DEFAULT '': enviar null faria a
+         função receber NULL em vez do padrão, e uma checagem de comentário
+         obrigatório recusaria a decisão. */
       return rpc("pa_2027_decidir", { p_id: id, p_decisao: decisao,
-        p_comentario: comentario || null }).then(function (r) {
+        p_comentario: comentario === null || comentario === undefined ? "" : String(comentario)
+      }).then(function (r) {
         if (!r.ok) return { ok: false, mensagem: "Não foi possível registrar a decisão." };
         return SOL.historicoPA(id).then(function (hh) {
           return { ok: true, confirmado: hh.ok && hh.itens.length > 0,
@@ -23834,6 +24019,121 @@ if (typeof APP !== "undefined" && APP) {
           itens: Array.isArray(r.dados) ? r.dados : (r.dados ? [r.dados] : []),
           mensagem: r.ok ? null : "Não foi possível carregar o histórico." };
       });
+    },
+
+    /* ── Releitura de um registro pelo id, direto da listagem do banco ──
+       Serve a tudo que precisa do estado efetivo: depois de salvar, depois
+       de uma análise do RH, depois de uma decisão. Nunca devolve estado
+       inferido: ou o registro veio do banco, ou não veio. */
+    relerPA: function (id) {
+      if (!eUUID(id)) {
+        return Promise.resolve({ ok: false, registro: null, status: null,
+          mensagem: "Identificador inválido: esperado UUID." });
+      }
+      return SOL.listarPA().then(function (l) {
+        if (!l.ok) return { ok: false, registro: null, status: null, mensagem: l.mensagem };
+        for (var i = 0; i < l.itens.length; i++) {
+          var x = l.itens[i];
+          if (x && String(x.id || x.uuid) === String(id)) {
+            return { ok: true, registro: x, status: x.status || null,
+              versao: x.versao === undefined ? null : x.versao, mensagem: null };
+          }
+        }
+        /* Não encontrar não é erro de rede: é o banco dizendo que este perfil
+           não vê este registro, ou que ele não existe. A diferença importa e
+           não é inventada aqui. */
+        return { ok: true, registro: null, status: null,
+          mensagem: "O banco não devolveu esta solicitação para o seu perfil." };
+      });
+    },
+
+    /* ── ANÁLISE DO RH · pa_2027_rh_analisar ──
+       Contrato verificado no banco:
+         pa_2027_rh_analisar(p_id uuid, p_decisao text,
+                             p_rescisao numeric DEFAULT NULL,
+                             p_comentario text DEFAULT '') -> void
+
+       p_decisao aceita 'validar' ou 'devolver'. Validar exige p_rescisao
+       numérico não negativo; devolver exige comentário. A função atua
+       somente sobre desligamento em sol_aguardando_rh. Validar leva a
+       sol_enviada; devolver leva a sol_ajuste.
+
+       As checagens abaixo dão mensagem clara antes da viagem; elas não
+       substituem a função. A autorização e a regra são do banco, e é ele
+       que recusa por último. */
+    analisarRH: function (id, decisao, rescisao, comentario) {
+      if (!eUUID(id)) {
+        return Promise.resolve({ ok: false,
+          mensagem: "Identificador de solicitação inválido: esperado UUID." });
+      }
+      if (decisao !== "validar" && decisao !== "devolver") {
+        return Promise.resolve({ ok: false,
+          mensagem: "Decisão do RH inválida: use validar ou devolver." });
+      }
+      var args = { p_id: id, p_decisao: decisao };
+      if (decisao === "validar") {
+        var entrada = String(rescisao === null || rescisao === undefined ? "" : rescisao).trim();
+        var normalizada = entrada.indexOf(",") >= 0
+          ? entrada.replace(/\./g, "").replace(",", ".")
+          : entrada;
+        var n = typeof rescisao === "number" ? rescisao
+          : (normalizada && /^\d+(?:\.\d+)?$/.test(normalizada) ? Number(normalizada) : NaN);
+        if (!isFinite(n) || n < 0) {
+          return Promise.resolve({ ok: false,
+            mensagem: "Informe o valor da rescisão: número igual ou maior que zero." });
+        }
+        args.p_rescisao = n;
+      } else {
+        var c = comentario === null || comentario === undefined ? "" : String(comentario).trim();
+        if (!c) {
+          return Promise.resolve({ ok: false,
+            mensagem: "Para devolver ao gestor é obrigatório justificar." });
+        }
+      }
+      args.p_comentario = comentario === null || comentario === undefined
+        ? "" : String(comentario);
+
+      return rpc("pa_2027_rh_analisar", args).then(function (r) {
+        if (!r.ok) {
+          return { ok: false,
+            mensagem: "O banco não aceitou a análise do RH. A solicitação continua como estava." };
+        }
+        /* A função devolve void, então o único jeito honesto de dizer que
+           funcionou é ver o status novo na releitura. */
+        return SOL.relerPA(id).then(function (rl) {
+          var esperado = decisao === "validar" ? "sol_enviada" : "sol_ajuste";
+          var st = rl.status;
+          return { ok: st === esperado, status: st, registro: rl.registro,
+            confirmado: st === esperado,
+            mensagem: st === esperado
+              ? (decisao === "validar"
+                  ? "Rescisão registrada e solicitação encaminhada ao Gerente Geral."
+                  : "Solicitação devolvida ao gestor com a justificativa.")
+              : "A análise foi aceita, mas a releitura devolveu " +
+                (st ? "o status " + st : "nenhum registro") +
+                ". Confira antes de prosseguir." };
+        });
+      });
+    },
+
+    /* ── CONSULTA DO ROTEAMENTO · pa_2027_fluxo_desligamento ──
+       Contrato verificado: (p_dados jsonb, p_enviar boolean) -> text.
+
+       Usada apenas para INFORMAR, antes do envio, para onde a solicitação
+       vai. Não grava e não decide: o roteamento de fato é do gatilho
+       pa_2027_rh_rotear_trg, e o status real vem da releitura. Falha aqui é
+       silenciosa de propósito — não pode impedir o gestor de enviar. */
+    fluxoDesligamento: function (dados, enviar) {
+      return rpc("pa_2027_fluxo_desligamento", { p_dados: dados, p_enviar: !!enviar })
+        .then(function (r) {
+          if (!r.ok) return { ok: false, destino: null };
+          var t = r.dados;
+          if (t && typeof t === "object") {
+            t = Array.isArray(t) ? t[0] : (t.pa_2027_fluxo_desligamento || null);
+            if (t && typeof t === "object") t = t.pa_2027_fluxo_desligamento || null;
+          }
+          return { ok: true, destino: t === null || t === undefined ? null : String(t) };
+        })["catch"](function () { return { ok: false, destino: null }; });
     },
 
     /* ── Gerais · BIGINT ── */
@@ -23870,6 +24170,275 @@ if (typeof APP !== "undefined" && APP) {
     eUUID: eUUID, eBigint: eBigint
   };
   SBDATA.SOL = SOL;
+
+  /* ═══════════════ FLUXO DE DESLIGAMENTO ═══════════════
+
+     Gestor → RH → Gerente Geral, com o banco decidindo cada passo.
+
+     O que esta camada faz:
+       · envia o desligamento pelo banco (pa_2027_salvar com p_enviar) e
+         DEVOLVE O STATUS QUE O BANCO GRAVOU, lido por releitura — porque
+         pa_2027_salvar grava sol_enviada e o gatilho pa_2027_rh_rotear_trg
+         desvia o desligamento para sol_aguardando_rh depois disso;
+       · lista, para o RH, o que está parado em sol_aguardando_rh;
+       · registra a análise do RH (validar com rescisão, ou devolver com
+         justificativa) por pa_2027_rh_analisar;
+       · responde se o Gerente Geral já pode decidir.
+
+     O que NÃO faz: não decide autorização. Quem o gestor pode desligar,
+     o que a Cíntia vê e quando o Gerente Geral pode decidir é resposta do
+     banco — RLS e as próprias funções. As checagens aqui existem para dar
+     mensagem clara antes da viagem e para não oferecer na tela o que será
+     recusado. Nenhuma delas substitui o banco.
+
+     PONTO A CONFIRMAR, declarado: o contrato de pa_2027_salvar diz
+     p_dados jsonb, sem especificar a forma. Esta camada envia o próprio
+     objeto do formulário, que já carrega tipo: "desligamento" — o
+     discriminador natural para o gatilho. Se o gatilho olhar outra chave,
+     é só ajustar MAPA_DADOS abaixo; nada mais muda. */
+  var DESLIG = {};
+  window.DESLIGAMENTO = DESLIG;
+
+  var TIPO_DESLIG = "desligamento";
+
+  /* Tradução do formulário para o jsonb. Um lugar só. */
+  function MAPA_DADOS(d) {
+    var o = {};
+    Object.keys(d || {}).forEach(function (k) { o[k] = d[k]; });
+    o.tipo = d && d.tipo ? d.tipo : TIPO_DESLIG;
+    return o;
+  }
+
+  DESLIG.eDesligamento = function (x) {
+    if (!x) return false;
+    var t = x.tipo || (x.dados && x.dados.tipo) || null;
+    return String(t) === TIPO_DESLIG;
+  };
+
+  /* ── Envio pelo banco ──
+     Devolve sempre o que o banco respondeu. Sem confirmação do banco, o
+     resultado é ok:false e a tela não pode dizer que enviou. */
+  DESLIG.enviar = function (dados, gerenciaId) {
+    if (!eBigint(gerenciaId)) {
+      return Promise.resolve({ ok: false,
+        mensagem: "Gerência não identificada para o banco. O envio não foi feito." });
+    }
+    return SOL.salvarPA(null, Number(gerenciaId), MAPA_DADOS(dados), true)
+      .then(function (r) {
+        if (!r.ok) return r;
+        /* Falha fechada: um desligamento não pode ser anunciado como enviado
+           corretamente se o gatilho não o encaminhou ao RH. O registro pode
+           existir no banco: conservar seu UUID para diagnóstico, sem reenviar
+           automaticamente e sem duplicar a solicitação. */
+        var noRH = r.confirmado === true && r.status === "sol_aguardando_rh";
+        return { ok: noRH, id: r.id, confirmado: r.confirmado,
+          status: r.status, registro: r.registro, versao: r.versao,
+          noRH: noRH,
+          mensagem: noRH
+            ? "Desligamento registrado e encaminhado ao RH para informar a rescisão."
+            : "ATENÇÃO: o banco registrou a solicitação " + (r.id || "sem identificador") +
+              ", mas devolveu status " + (r.status || "não informado") +
+              ". O encaminhamento obrigatório ao RH NÃO foi confirmado. Não reenvie antes de verificar o registro." };
+      });
+  };
+
+  /* ── A fila do RH ──
+     Vem de pa_2027_listar, que já devolve só o que o perfil pode ver: se a
+     Cíntia enxerga todas as gerências, é porque o banco entrega. O filtro
+     aqui é por tipo e status, não por autorização. */
+  DESLIG.filaRH = function () {
+    return SOL.listarPA().then(function (l) {
+      if (!l.ok) return { ok: false, itens: [], mensagem: l.mensagem };
+      var fila = l.itens.filter(function (x) {
+        return x && x.status === "sol_aguardando_rh" && DESLIG.eDesligamento(x.dados || x);
+      });
+      return { ok: true, itens: fila, total: fila.length,
+        gerencias: fila.reduce(function (a, x) {
+          var g = String(x.gerencia_id);
+          if (a.indexOf(g) < 0) a.push(g); return a;
+        }, []),
+        mensagem: null };
+    });
+  };
+
+  DESLIG.validar  = function (id, rescisao, comentario) {
+    return SOL.analisarRH(id, "validar", rescisao, comentario);
+  };
+  DESLIG.devolver = function (id, justificativa) {
+    return SOL.analisarRH(id, "devolver", null, justificativa);
+  };
+
+  /* ── Porta do Gerente Geral ──
+     Enquanto o desligamento estiver em sol_aguardando_rh, não há decisão a
+     tomar: a função do banco recusaria, e a tela não deve oferecer. */
+  DESLIG.podeDecidirGeral = function (registro) {
+    if (!registro) return false;
+    var st = registro.status || null;
+    if (DESLIG.eDesligamento(registro.dados || registro) && st === "sol_aguardando_rh") return false;
+    return st === "sol_enviada";
+  };
+  DESLIG.motivoBloqueioGeral = function (registro) {
+    if (!registro) return "Solicitação não encontrada no banco.";
+    if (DESLIG.eDesligamento(registro.dados || registro) && registro.status === "sol_aguardando_rh") {
+      return "Aguardando a validação do RH: a rescisão precisa ser informada antes da decisão.";
+    }
+    return null;
+  };
+
+  /* ── Quem o gestor pode desligar ──
+     Só colaborador da própria equipe. A fonte é o quadro que o banco
+     entregou para este perfil (SBDATA), não uma lista local: se o
+     colaborador não está no quadro que o banco devolveu, não é da equipe
+     dele. Padrão fechado — sem quadro carregado, ninguém é elegível. */
+  DESLIG.podeSolicitarPara = function (matricula, gerenciaNome) {
+    if (matricula === null || matricula === undefined || matricula === "") return false;
+    var PP = window.PESSOAL;
+    if (!PP || !PP.PES) return false;
+    var achou = false;
+    PP.PES.gerencias.forEach(function (g) {
+      if (gerenciaNome && g.nome !== gerenciaNome) return;
+      (g.ccs || []).forEach(function (cc) {
+        (cc.colaboradores || []).forEach(function (c) {
+          if (String(c.matricula) === String(matricula)) achou = true;
+        });
+      });
+    });
+    if (!achou) return false;
+    /* E a área tem de estar autorizada para este perfil. */
+    if (gerenciaNome && window.NAVPERM && typeof window.NAVPERM.podeGerencia === "function") {
+      return window.NAVPERM.podeGerencia(gerenciaNome) === true;
+    }
+    return true;
+  };
+
+  /* Consulta informativa do roteamento, antes do envio. Nunca bloqueia. */
+  DESLIG.destinoPrevisto = function (dados) {
+    return SOL.fluxoDesligamento(MAPA_DADOS(dados), true);
+  };
+
+  /* ── Quem analisa ──
+     Não é por nome nem por e-mail: é autorização de operar a área de RH, ou
+     perfil institucional de administração. A decisão final continua sendo do
+     banco — pa_2027_rh_analisar recusa quem não puder. Isto só decide se a
+     tela OFERECE a ação, para não apresentar botão que será negado. */
+  DESLIG.podeAnalisar = function () {
+    var A = window.AUTH;
+    if (!A || A.carregado !== true) return false;
+    try {
+      if (typeof A.podeAdministrar === "function" && A.podeAdministrar()) return true;
+      if (typeof A.podeOperarGerencia === "function" && A.podeOperarGerencia("RH")) return true;
+      if (typeof A.podeOperarGerencia === "function" && A.podeOperarGerencia(6)) return true;
+    } catch (e) { return false; }
+    return false;
+  };
+
+  /* ── Cache da fila, com estado declarado ──
+     nao-carregada · carregando · pronto · erro. Fila vazia só é afirmada
+     quando o banco respondeu: falha de leitura nunca vira "não há nada". */
+  DESLIG.fila = [];
+  DESLIG.estadoFila = "nao-carregada";
+  DESLIG.mensagemFila = null;
+  DESLIG.carregarFila = function (depois) {
+    if (DESLIG.estadoFila === "carregando") return;
+    DESLIG.estadoFila = "carregando";
+    DESLIG.filaRH().then(function (r) {
+      DESLIG.fila = r.ok ? r.itens : [];
+      DESLIG.estadoFila = r.ok ? "pronto" : "erro";
+      DESLIG.mensagemFila = r.ok ? null : (r.mensagem || "Não foi possível ler a fila do RH.");
+      if (typeof depois === "function") depois();
+    })["catch"](function (e) {
+      DESLIG.fila = []; DESLIG.estadoFila = "erro";
+      DESLIG.mensagemFila = "Falha ao falar com o banco: " + ((e && e.message) || "erro");
+      if (typeof depois === "function") depois();
+    });
+  };
+
+  /* ── A tela do RH ──
+     Montada com os helpers de apresentação que o painel já tem; nenhuma
+     classe nova de CSS foi criada. */
+  DESLIG.telaFilaRH = function () {
+    var A = window.APP, SO = window.SOLICITACOES;
+    if (!A || !SO || typeof A.esc !== "function") return "";
+    var esc = A.esc, S = A.state;
+
+    var cab = '<div class="card-pad"><b>Desligamentos aguardando validação do RH</b>' +
+      '<div class="muted" style="font-size:12px;margin-top:4px">' +
+      "Todas as gerências que o banco libera para o seu perfil. Informe o valor da " +
+      "rescisão para encaminhar ao Gerente Geral, ou devolva ao gestor com justificativa." +
+      "</div></div>";
+    function cartao(corpo, sub) {
+      return typeof A.card === "function"
+        ? A.card("Fila do RH", sub || "desligamentos", cab + corpo)
+        : cab + corpo;
+    }
+
+    if (DESLIG.estadoFila === "nao-carregada" || DESLIG.estadoFila === "carregando") {
+      return cartao('<div class="card-pad muted">Consultando o banco…</div>');
+    }
+    if (DESLIG.estadoFila === "erro") {
+      return cartao('<div class="card-pad desf">' +
+        esc(DESLIG.mensagemFila || "Não foi possível ler a fila.") +
+        '<br><span class="muted" style="font-size:12px">Isto é falha de leitura, ' +
+        "não ausência de solicitações.</span></div>");
+    }
+    if (!DESLIG.fila.length) {
+      return cartao('<div class="card-pad muted">Nenhum desligamento aguardando validação do RH.</div>');
+    }
+
+    var podeAgir = DESLIG.podeAnalisar();
+    var linhas = DESLIG.fila.map(function (x) {
+      var d = x.dados || {};
+      var id = x.id || x.uuid;
+      var msg = S.rhMensagem && S.rhMensagem.id === id ? S.rhMensagem : null;
+      var ocupado = S.rhProcessando === id;
+      return '<tr class="hoverable">' +
+        "<td>" + esc(d.colaboradorNome || d.colaborador || d.colaboradorId || "—") + "</td>" +
+        "<td>" + esc(d.ccNome || d.ccId || "—") + "</td>" +
+        "<td>" + esc(typeof SO.modalidadeNome === "function"
+          ? SO.modalidadeNome(d.modalidade) : (d.modalidade || "—")) + "</td>" +
+        '<td class="num">' + esc(d.mesInicio || "—") + "</td>" +
+        "<td>" + esc(x.gerencia_id === null || x.gerencia_id === undefined ? "—" : x.gerencia_id) + "</td>" +
+        "<td>" + A.wfTag(x.status) + "</td>" +
+        "<td>" + (podeAgir
+          ? '<input id="rhRescisao-' + esc(id) + '" type="text" inputmode="decimal" ' +
+            'placeholder="valor da rescisão" value="' +
+            esc(d.rh_rescisao !== null && d.rh_rescisao !== undefined ? d.rh_rescisao :
+              (d.rescisaoValor !== null && d.rescisaoValor !== undefined && Number(d.rescisaoValor) > 0 ? d.rescisaoValor :
+              (d.rescisao === null || d.rescisao === undefined ? "" : d.rescisao))) +
+            '" style="width:150px">' +
+            '<input id="rhCom-' + esc(id) + '" type="text" ' +
+            'placeholder="justificativa (para devolver)" style="width:200px;margin-left:6px">'
+          : '<span class="muted">sem autorização para analisar</span>') + "</td>" +
+        "<td>" + (podeAgir
+          ? (ocupado
+              ? '<span class="muted">registrando…</span>'
+              : '<button class="bt" data-sol="rh-validar:' + esc(id) + '">Validar e encaminhar</button> ' +
+                '<button class="bt sec" data-sol="rh-devolver:' + esc(id) + '">Devolver</button>')
+          : "—") +
+          (msg ? '<div style="font-size:12px;margin-top:4px" class="' +
+            (msg.ok ? "muted" : "desf") + '">' + esc(msg.texto) + "</div>" : "") +
+        "</td></tr>";
+    }).join("");
+
+    return cartao('<div class="tw"><table><thead><tr>' +
+      "<th>Colaborador</th><th>Centro de custo</th><th>Modalidade</th>" +
+      '<th class="num">Mês</th><th>Gerência</th><th>Situação</th>' +
+      "<th>Rescisão e justificativa</th><th>Ação</th>" +
+      "</tr></thead><tbody>" + linhas + "</tbody></table></div>",
+      DESLIG.fila.length + " aguardando validação");
+  };
+
+  DESLIG.diagnostico = function () {
+    return { tipo: TIPO_DESLIG,
+      podeAnalisar: DESLIG.podeAnalisar(),
+      estadoFila: DESLIG.estadoFila, naFila: DESLIG.fila.length,
+      funcoes: ["pa_2027_salvar", "pa_2027_listar", "pa_2027_rh_analisar",
+        "pa_2027_fluxo_desligamento", "pa_2027_decidir"],
+      gatilhoNoBanco: "pa_2027_rh_rotear_trg (pa_2027_solicitacoes)",
+      statusDoRH: "sol_aguardando_rh",
+      validarLevaA: "sol_enviada", devolverLevaA: "sol_ajuste",
+      statusVemDe: "releitura por pa_2027_listar, nunca suposto" };
+  };
 
   /* ─────────── AUTORIZAÇÃO POR ÁREA, PERGUNTADA AO BANCO ───────────
      O painel já tem AUTH.podeVerGerencia / podeOperarGerencia, que leem o
