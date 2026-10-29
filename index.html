@@ -2181,7 +2181,7 @@ tr.hoverable:hover>td{background:rgba(61,123,255,.06);}
     var uid = AUTH.user.id;
 
     return SB.from("perfis")
-      .select("id,nome,perfil,gerencia_id,ativo,cargo,acesso_global_leitura,pode_decidir,pode_administrar,troca_senha_obrigatoria")
+      .select("id,nome,perfil,gerencia_id,ativo,cargo,acesso_global_leitura,acesso_dre_consolidada,pode_decidir,pode_administrar,troca_senha_obrigatoria")
       .eq("id", uid).maybeSingle()
       .then(function (r) {
         if (r && r.error) { AUTH.erro = r.error; avisar("perfis", r.error); return { ok: false, motivo: "perfil-erro" }; }
@@ -3122,6 +3122,8 @@ tr.hoverable:hover>td{background:rgba(61,123,255,.06);}
   NAVPERM.podeVisaoGeral = function () {
     if (!NAVPERM.pronto()) return false;
     if (leituraGlobal() || administra()) return true;
+    /* Autorizacao explicita da DRE consolidada, sem leitura global de outras pecas. */
+    if (A().perfil && A().perfil.acesso_dre_consolidada === true) return true;
     return !!consultarMod(MOD_REF.visaogeral);
   };
 
