@@ -27718,13 +27718,13 @@ var ESP_AGREGADO_DESPESA = {
             l.orcado_2027_mensal.map(function(v){return '<td class="num">'+(v===null?'—':fmt(v,2))+'</td>';}).join('')+'</tr>');
         });
       });
-      if(rows.length)out+=card('Propostas 2027 registradas no Supabase',
-        'Fonte original · 12 meses · sem integração automática à DRE',
+      if(rows.length)out+=card('Matrizes de Esportes 2027 · registradas no sistema',
+        'Judô e Musculação · valores mensais originais · persistência confirmada, sem lançamento automático na DRE',
         '<div class="tw"><table><thead><tr><th>Origem</th><th>Conta</th>'+
         A.MESES.map(function(z){return '<th>'+esc(z)+'</th>';}).join('')+
         '</tr></thead><tbody>'+rows.join('')+'</tbody></table></div>');
     }
-    if (window.ESPORTES_IMPORT && window.ESPORTES_IMPORT.grupos && window.AUTH && window.AUTH.carregado && window.AUTH.podeAdministrar && window.AUTH.podeAdministrar()) {
+    if (window.ESP_MATRIZES_PERSISTIDAS !== 6 && window.ESPORTES_IMPORT && window.ESPORTES_IMPORT.grupos && window.AUTH && window.AUTH.carregado && window.AUTH.podeAdministrar && window.AUTH.podeAdministrar()) {
       out += '<div class="pl-prem"><b>Importação 2027 · planilhas atualizadas</b><span>Importação controlada para o Supabase. Preserva a fonte integral; não altera a DRE nem substitui valores de outras gerências. Clique para registrar os dados de Judô e Musculação.</span><button class="btn pri" data-espacao="importar2027">Importar propostas de Judô e Musculação para o Supabase</button></div><div class="gap"></div>';
     }
 
@@ -27781,6 +27781,7 @@ var ESP_AGREGADO_DESPESA = {
       A.MESES.map(function (x) { return '<th class="num">' + x + "</th>"; }).join("") +
       '<th class="num">Total</th></tr></thead><tbody>' + corpo + "</tbody></table></div>",
       "⚠ no total indica que o número congelado na planilha difere da agregação dos meses. " +
+      "Valor zero é apresentado como 0,00; traço indica ausência de valor na fonte. " +
       "Exibimos o da fonte e não corrigimos nada. Os nomes longos aparecem truncados na " +
       "primeira coluna; o nome completo está no tooltip da própria linha.");
 
@@ -28042,6 +28043,16 @@ var ESP_AGREGADO_DESPESA = {
     if (c.temConteudo) {
       c.achados.forEach(function (a) {
         var ind = ES.indById(a.indicador);
+        // If the DRE mapping omits the 2027 series, retain the original matrix
+        // as an explicitly labelled, read-only comparison, never a DRE posting.
+        if(a.series && !a.series.some(function(z){return z.bloco==='o27';})) {
+          var original=ES.serie(a.modalidade,a.origem,a.indicador,'o27');
+          if(original && original.some(function(v){return v!==null&&v!==undefined;})) {
+            a.series=a.series.concat([{bloco:'o27',curto:'Orç. 2027 (matriz)',meses:original,
+              totalFonte:ES.totalFonte(a.modalidade,a.origem,a.indicador,'o27'),
+              totalCalculado:ES.totalCalculado(a.modalidade,a.origem,a.indicador,'o27')}]);
+          }
+        }
         var linhas = A.MESES.map(function (nome, i) {
           return "<tr><td><b>" + nome + "</b></td>" +
             a.series.map(function (sb) {
@@ -29895,6 +29906,7 @@ function carregar(){
  if(r.error){console.warn('Esportes: leitura:',r.error.message);iniciado=false;return;}
  (r.data||[]).forEach(function(x){pendentes[linhaChave(x.modalidade,x.origem)]=x.dados;});
  window.ESP_IMPORTADOS=pendentes;
+ window.ESP_MATRIZES_PERSISTIDAS=(r.data||[]).length;
  if(window.APP&&window.APP.render)window.APP.render();
  });
 }
