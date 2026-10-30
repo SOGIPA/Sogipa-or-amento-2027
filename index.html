@@ -29521,11 +29521,11 @@ function ler(force){
  window.SB.rpc('pa_2027_listar').then(function(r){
   if(r.error)throw Error(r.error.message||'Falha na consulta');
   var rows=Array.isArray(r.data)?r.data:[];
-  registros=rows.filter(function(x){var d=x.dados||{};return d.tipo==='desligamento'&&['sol_enviada','sol_aprovada','sol_reprovada','sol_ajuste'].indexOf(x.status)>=0&&d.rh_validado===true;});
+  registros=rows.filter(function(x){var d=x.dados||{};return ['sol_enviada','sol_aprovada','sol_reprovada','sol_ajuste'].indexOf(x.status)>=0&&(d.tipo!=='desligamento'||d.rh_validado===true);});
   estado='pronto';erro='';
  }).catch(function(e){estado='erro';erro=e.message||String(e);}).then(function(){emCarga=false;atualizarBloco();});
 }
-function nome(x){var d=x.dados||{};if(window.DESLIGAMENTO&&window.DESLIGAMENTO.identificarColaborador){return window.DESLIGAMENTO.identificarColaborador(x).nome;}return d.colaboradorNome||d.colaborador||d.colaboradorId||'Colaborador';}
+function nome(x){var d=x.dados||{};if(d.tipo!=='desligamento')return d.titulo||d.descricao||d.tipo||'Solicitação orçamentária';if(window.DESLIGAMENTO&&window.DESLIGAMENTO.identificarColaborador){return window.DESLIGAMENTO.identificarColaborador(x).nome;}return d.colaboradorNome||d.colaborador||d.colaboradorId||'Colaborador';}
 function ger(x){return window.DESLIGAMENTO&&window.DESLIGAMENTO.nomeGerencia?window.DESLIGAMENTO.nomeGerencia(x):'Gerência '+x.gerencia_id;}
 function cc(x){return window.DESLIGAMENTO&&window.DESLIGAMENTO.nomeCC?window.DESLIGAMENTO.nomeCC(x):(x.dados||{}).ccId||'—';}
 function pendentes(){return registros.filter(function(x){return x.status==='sol_enviada';});}
@@ -29533,30 +29533,50 @@ function bloco(){
  if(!autorizado())return '';
  var fila=pendentes(),hist=registros.filter(function(x){return x.status!=='sol_enviada';});
  var out='<section id="gg-pa-fila-real" style="margin:18px 0 24px;border:1px solid #465271;border-radius:12px;background:#1e2230;padding:18px;color:#f5f6fb">'+
- '<div style="display:flex;gap:12px;justify-content:space-between;align-items:center;flex-wrap:wrap"><div><h3 style="margin:0 0 6px">Desligamentos encaminhados pelo RH</h3><div style="font-size:12px;color:#adb8d0">Fila oficial do Supabase · decisão exclusiva do Gerente Geral / administrador</div></div><button class="btn sm" data-gg-pa-refresh="1">Atualizar solicitações</button></div>';
+ '<div style="display:flex;gap:12px;justify-content:space-between;align-items:center;flex-wrap:wrap"><div><h3 style="margin:0 0 6px">Solicitações aguardando decisão</h3><div style="font-size:12px;color:#adb8d0">Fila oficial do Supabase · desligamentos passam pelo RH; demais pedidos seguem a alçada configurada</div></div><button class="btn sm" data-gg-pa-refresh="1">Atualizar solicitações</button></div>';
  if(estado==='aguardando'||estado==='carregando')return out+'<p>Consultando solicitações…</p></section>';
  if(estado==='erro')return out+'<p style="color:#f9b3b3">Não foi possível consultar a fila: '+esc(erro)+'</p></section>';
  out+='<p><strong>'+fila.length+'</strong> aguardando decisão · <strong>'+hist.length+'</strong> já movimentadas pelo Gerente Geral</p>';
- if(!fila.length)out+='<p style="color:#adb8d0">Nenhum desligamento validado pelo RH aguardando decisão.</p>';
+ if(!fila.length)out+='<p style="color:#adb8d0">Nenhuma solicitação aguardando decisão.</p>';
  fila.forEach(function(x){var d=x.dados||{};out+='<article style="padding:14px;border:1px solid #404b63;border-radius:8px;margin:10px 0">'+
  '<div><strong>'+esc(nome(x))+'</strong> · '+esc(ger(x))+' · '+esc(cc(x))+'</div>'+
- '<div style="margin-top:8px">Rescisão informada pelo RH: <strong>'+dinheiro(d.rh_rescisao)+'</strong> · Mês: '+esc(d.mesInicio||'—')+'</div>'+
+ '<div style="margin-top:8px">'+(d.tipo==='desligamento'?'Rescisão informada pelo RH: <strong>'+dinheiro(d.rh_rescisao)+'</strong> · Mês: '+esc(d.mesInicio||'—'):'Tipo: '+esc(d.tipo||'Solicitação')+' · Mês: '+esc(d.mesInicio||d.mes||'—'))+'</div>'+
  '<div style="margin-top:6px">Justificativa do gestor: '+esc(d.justificativa||'Não informada')+'</div>'+
- '<div style="margin-top:6px">Parecer do RH: '+esc(d.rh_parecer||'Não informado')+'</div>'+
- '<div style="margin-top:10px;font-size:12px;color:#d6c79a">Simulação para decisão. Nenhum desligamento real é executado por esta tela.</div>'+
+ (d.tipo==='desligamento'?'<div style="margin-top:6px">Parecer do RH: '+esc(d.rh_parecer||'Não informado')+'</div>':'')+
+ '<div style="margin-top:10px;font-size:12px;color:#d6c79a">Decisão orçamentária. Nenhuma ação operacional real é executada por esta tela.</div>'+
  '<div class="row" style="margin-top:12px;gap:8px;flex-wrap:wrap"><button class="btn pri" data-gg-pa-decidir="'+esc(x.id)+'">Analisar / decidir</button></div></article>';});
  if(hist.length){out+='<details style="margin-top:14px"><summary>Histórico de solicitações movimentadas ('+hist.length+')</summary>';hist.forEach(function(x){out+='<p>'+esc(nome(x))+' · '+esc(ger(x))+' · '+esc(x.status)+'</p>';});out+='</details>';}
  return out+'</section>';
 }
-function atualizarBloco(){var el=document.getElementById('gg-pa-fila-real');if(el)el.outerHTML=bloco();}
-function envolver(obj,key){if(!obj||typeof obj[key]!=='function')return;var fn=obj[key];obj[key]=function(){var html=fn.apply(this,arguments);if(autorizado()){ler(false);return bloco()+html;}return html;};}
+function atualizarBloco(){var el=document.getElementById('gg-pa-fila-real');if(el)el.outerHTML=bloco();atualizarAvisos();}
+function atualizarAvisos(){
+ if(!autorizado()||estado!=='pronto')return;
+ var fila=pendentes(), raiz=document.getElementById('gg-pa-fila-real');if(!raiz)return;
+ var alvo=raiz.parentElement;if(!alvo)return;
+ var ant=alvo.querySelector('#gg-pa-resumo-gerencias');if(ant)ant.remove();
+ var cont={};fila.forEach(function(x){var k=ger(x);(cont[k]||(cont[k]=[])).push(x);});
+ var painel=document.createElement('section');painel.id='gg-pa-resumo-gerencias';painel.style.cssText='border:1px solid #465271;border-radius:12px;padding:18px;margin:12px 0 24px;background:#1e2230';
+ var grupos=Object.keys(cont);var texto='<h3 style="margin:0 0 12px">Solicitações por gerência — fila oficial</h3>';
+ if(!grupos.length)texto+='<p style="color:#aeb9ce">Nenhuma gerência com solicitação pendente no Supabase.</p>';
+ grupos.forEach(function(g){texto+='<div style="padding:10px 0;border-top:1px solid #38435a"><strong>'+esc(g)+'</strong> · '+cont[g].length+' pendente(s)<div style="font-size:13px;color:#b9c6df">'+cont[g].map(function(x){return esc(nome(x))+' ('+esc((x.dados||{}).tipo||'pedido')+')';}).join(' · ')+'</div></div>';});
+ painel.innerHTML=texto;
+ alvo.insertBefore(painel,raiz.nextSibling);
+ var h=alvo.querySelector('#gg-pa-aviso-decisao');if(h)h.remove();
+ var aviso=document.createElement('div');aviso.id='gg-pa-aviso-decisao';aviso.setAttribute('role','status');aviso.style.cssText='border:1px solid '+(fila.length?'#b38b43':'#465271')+';border-radius:9px;padding:12px 16px;margin:8px 0;background:#202431;color:#f5f6fb';
+ aviso.innerHTML=fila.length?'<strong>⚠ '+fila.length+' solicitação(ões) aguardando tua decisão</strong> · Confira os pedidos abaixo.':'<strong>Nenhuma solicitação aguardando tua decisão no Supabase.</strong>';
+ alvo.insertBefore(aviso,raiz);
+ // Legacy summary uses a separate in-memory data source; hide its incorrect empty-state when Supabase has pending requests.
+ if(fila.length){var todos=alvo.querySelectorAll('*');todos.forEach(function(n){if(n.children.length===0&&/^(Nenhuma decisão pendente|As nove gerências estão sem solicitações registradas\.)$/.test((n.textContent||'').trim())){var card=n.closest('.card')||n.closest('.empty')||n.parentElement;if(card&&card!==alvo&&card!==raiz)card.style.display='none';}});}
+}
+
+function envolver(obj,key){if(!obj||typeof obj[key]!=='function')return;var fn=obj[key];obj[key]=function(){var html=fn.apply(this,arguments);if(autorizado()){ler(false);setTimeout(atualizarAvisos,0);return bloco()+html;}return html;};}
 envolver(window.GERAL_EXEC,'visaoExec');envolver(window.DECISOES,'render');
 function fechar(){var el=document.getElementById('gg-pa-modal');if(el)el.remove();}
 function modal(id){var x=registros.filter(function(v){return String(v.id)===String(id)&&v.status==='sol_enviada';})[0];if(!x)return;
  fechar();var el=document.createElement('div');el.id='gg-pa-modal';el.style.cssText='position:fixed;inset:0;z-index:999999;background:rgba(0,0,0,.78);display:flex;align-items:center;justify-content:center;padding:18px';
  el.innerHTML='<div role="dialog" aria-modal="true" style="background:#202431;color:#fff;border:1px solid #536079;border-radius:12px;padding:24px;max-width:660px;width:100%;max-height:90vh;overflow:auto">'+
- '<h3>Decisão do Gerente Geral — desligamento</h3><p><strong>'+esc(nome(x))+'</strong> · '+esc(ger(x))+'</p><p>Rescisão informada pelo RH: <strong>'+dinheiro((x.dados||{}).rh_rescisao)+'</strong></p>'+
- '<p>Parecer do RH: '+esc((x.dados||{}).rh_parecer||'Não informado')+'</p><p style="font-size:12px;color:#e5ca87">Registro de decisão orçamentária. Não efetiva desligamento na folha ou na Intranet.</p>'+
+ '<h3>Decisão do Gerente Geral — solicitação</h3><p><strong>'+esc(nome(x))+'</strong> · '+esc(ger(x))+'</p><p>Rescisão informada pelo RH: <strong>'+dinheiro((x.dados||{}).rh_rescisao)+'</strong></p>'+
+ ((x.dados||{}).tipo==='desligamento'?'<p>Parecer do RH: '+esc((x.dados||{}).rh_parecer||'Não informado')+'</p>':'')+'<p style="font-size:12px;color:#e5ca87">Registro de decisão orçamentária. Não efetiva desligamento na folha ou na Intranet.</p>'+
  '<label for="gg-pa-comentario">Comentário / justificativa</label><textarea id="gg-pa-comentario" rows="3" style="width:100%;margin:8px 0 14px;background:#141720;color:#fff;border:1px solid #59637a;border-radius:6px;padding:10px"></textarea>'+
  '<p id="gg-pa-erro" style="color:#ffb4b4"></p><div class="row" style="gap:8px;flex-wrap:wrap">'+
  '<button class="btn pri" data-gg-pa-acao="sol_aprovada" data-id="'+esc(id)+'">Aprovar proposta</button>'+
