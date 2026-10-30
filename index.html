@@ -2291,6 +2291,23 @@ tr.hoverable:hover>td{background:rgba(61,123,255,.06);}
             AUTH.carregado = true;
             AUTH.erro = null;
 
+            /* Recuperação restrita de permissão: quando o join de perfil_modulos
+               não entrega a peça Churrasqueiras, confirmar o módulo 3 na RPC
+               autenticada do próprio banco. Jamais liberar por gerência, nome,
+               hardcode de usuário ou ausência de resposta. A sessão permanece. */
+            if (!AUTH.modulos.some(function (m) { return Number(m.id) === 3; })) {
+              consultarModulo(3).then(function (m3) {
+                if (!AUTH.carregado || !m3.nivelOk ||
+                    ["visualizar", "operar", "decidir", "administrar"].indexOf(String(m3.nivel || "").toLowerCase()) < 0) return;
+                if (!AUTH.modulos.some(function (m) { return Number(m.id) === 3; })) {
+                  AUTH.modulos.push({ id: 3, nome: "Churrasqueiras", codigo: "churrasqueiras",
+                    semLeituraDoCadastro: false, nivelVinculo: null,
+                    nivel: m3.nivel, rpcOk: true });
+                  repintar();
+                }
+              })["catch"](function (e) { avisar("churrasqueiras:permissao", e); });
+            }
+
             /* ─── BUSCA DO DADO, DEPOIS DA AUTORIZAÇÃO ───
                O contexto de permissão está carregado; agora o painel pede
                ao banco o que este perfil pode ver. Disparado sem await de
