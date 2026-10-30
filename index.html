@@ -29504,6 +29504,85 @@ var ESP_AGREGADO_DESPESA = {
      Script de módulo é deferido por natureza, e isso é proposital — a
      abertura já travou a tela antes dele rodar, então o painel nunca
      fica visível esperando autenticação. -->
+<script id="gg-pa-2027-fila-real">
+/* GG — fila de desligamentos validada pelo RH, fonte exclusiva Supabase.
+   Nao altera matrizes, DRE, valores conciliados nem fluxo de RH. */
+(function(){
+'use strict';
+var registros=[], estado='aguardando', erro='', emCarga=false, ultimo=0;
+var A=function(){return window.APP;};
+function esc(x){return A()&&A().esc?A().esc(String(x==null?'':x)):String(x==null?'':x).replace(/[&<>"']/g,function(c){return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c];});}
+function dinheiro(x){var n=Number(x);return Number.isFinite(n)?n.toLocaleString('pt-BR',{style:'currency',currency:'BRL'}):'Não informado';}
+function autorizado(){var a=window.AUTH;return !!(a&&a.carregado&&((a.podeAdministrar&&a.podeAdministrar())||(a.perfil&&['gerente_geral','admin'].indexOf(a.perfil.papel)>=0)));}
+function ler(force){
+ if(!autorizado()||emCarga||(!force&&Date.now()-ultimo<12000))return;
+ if(!window.SB||!window.SB.rpc)return;
+ emCarga=true;estado='carregando';ultimo=Date.now();
+ window.SB.rpc('pa_2027_listar').then(function(r){
+  if(r.error)throw Error(r.error.message||'Falha na consulta');
+  var rows=Array.isArray(r.data)?r.data:[];
+  registros=rows.filter(function(x){var d=x.dados||{};return d.tipo==='desligamento'&&['sol_enviada','sol_aprovada','sol_reprovada','sol_ajuste'].indexOf(x.status)>=0&&d.rh_validado===true;});
+  estado='pronto';erro='';
+ }).catch(function(e){estado='erro';erro=e.message||String(e);}).then(function(){emCarga=false;atualizarBloco();});
+}
+function nome(x){var d=x.dados||{};if(window.DESLIGAMENTO&&window.DESLIGAMENTO.identificarColaborador){return window.DESLIGAMENTO.identificarColaborador(x).nome;}return d.colaboradorNome||d.colaborador||d.colaboradorId||'Colaborador';}
+function ger(x){return window.DESLIGAMENTO&&window.DESLIGAMENTO.nomeGerencia?window.DESLIGAMENTO.nomeGerencia(x):'Gerência '+x.gerencia_id;}
+function cc(x){return window.DESLIGAMENTO&&window.DESLIGAMENTO.nomeCC?window.DESLIGAMENTO.nomeCC(x):(x.dados||{}).ccId||'—';}
+function pendentes(){return registros.filter(function(x){return x.status==='sol_enviada';});}
+function bloco(){
+ if(!autorizado())return '';
+ var fila=pendentes(),hist=registros.filter(function(x){return x.status!=='sol_enviada';});
+ var out='<section id="gg-pa-fila-real" style="margin:18px 0 24px;border:1px solid #465271;border-radius:12px;background:#1e2230;padding:18px;color:#f5f6fb">'+
+ '<div style="display:flex;gap:12px;justify-content:space-between;align-items:center;flex-wrap:wrap"><div><h3 style="margin:0 0 6px">Desligamentos encaminhados pelo RH</h3><div style="font-size:12px;color:#adb8d0">Fila oficial do Supabase · decisão exclusiva do Gerente Geral / administrador</div></div><button class="btn sm" data-gg-pa-refresh="1">Atualizar solicitações</button></div>';
+ if(estado==='aguardando'||estado==='carregando')return out+'<p>Consultando solicitações…</p></section>';
+ if(estado==='erro')return out+'<p style="color:#f9b3b3">Não foi possível consultar a fila: '+esc(erro)+'</p></section>';
+ out+='<p><strong>'+fila.length+'</strong> aguardando decisão · <strong>'+hist.length+'</strong> já movimentadas pelo Gerente Geral</p>';
+ if(!fila.length)out+='<p style="color:#adb8d0">Nenhum desligamento validado pelo RH aguardando decisão.</p>';
+ fila.forEach(function(x){var d=x.dados||{};out+='<article style="padding:14px;border:1px solid #404b63;border-radius:8px;margin:10px 0">'+
+ '<div><strong>'+esc(nome(x))+'</strong> · '+esc(ger(x))+' · '+esc(cc(x))+'</div>'+
+ '<div style="margin-top:8px">Rescisão informada pelo RH: <strong>'+dinheiro(d.rh_rescisao)+'</strong> · Mês: '+esc(d.mesInicio||'—')+'</div>'+
+ '<div style="margin-top:6px">Justificativa do gestor: '+esc(d.justificativa||'Não informada')+'</div>'+
+ '<div style="margin-top:6px">Parecer do RH: '+esc(d.rh_parecer||'Não informado')+'</div>'+
+ '<div style="margin-top:10px;font-size:12px;color:#d6c79a">Simulação para decisão. Nenhum desligamento real é executado por esta tela.</div>'+
+ '<div class="row" style="margin-top:12px;gap:8px;flex-wrap:wrap"><button class="btn pri" data-gg-pa-decidir="'+esc(x.id)+'">Analisar / decidir</button></div></article>';});
+ if(hist.length){out+='<details style="margin-top:14px"><summary>Histórico de solicitações movimentadas ('+hist.length+')</summary>';hist.forEach(function(x){out+='<p>'+esc(nome(x))+' · '+esc(ger(x))+' · '+esc(x.status)+'</p>';});out+='</details>';}
+ return out+'</section>';
+}
+function atualizarBloco(){var el=document.getElementById('gg-pa-fila-real');if(el)el.outerHTML=bloco();}
+function envolver(obj,key){if(!obj||typeof obj[key]!=='function')return;var fn=obj[key];obj[key]=function(){var html=fn.apply(this,arguments);if(autorizado()){ler(false);return bloco()+html;}return html;};}
+envolver(window.GERAL_EXEC,'visaoExec');envolver(window.DECISOES,'render');
+function fechar(){var el=document.getElementById('gg-pa-modal');if(el)el.remove();}
+function modal(id){var x=registros.filter(function(v){return String(v.id)===String(id)&&v.status==='sol_enviada';})[0];if(!x)return;
+ fechar();var el=document.createElement('div');el.id='gg-pa-modal';el.style.cssText='position:fixed;inset:0;z-index:999999;background:rgba(0,0,0,.78);display:flex;align-items:center;justify-content:center;padding:18px';
+ el.innerHTML='<div role="dialog" aria-modal="true" style="background:#202431;color:#fff;border:1px solid #536079;border-radius:12px;padding:24px;max-width:660px;width:100%;max-height:90vh;overflow:auto">'+
+ '<h3>Decisão do Gerente Geral — desligamento</h3><p><strong>'+esc(nome(x))+'</strong> · '+esc(ger(x))+'</p><p>Rescisão informada pelo RH: <strong>'+dinheiro((x.dados||{}).rh_rescisao)+'</strong></p>'+
+ '<p>Parecer do RH: '+esc((x.dados||{}).rh_parecer||'Não informado')+'</p><p style="font-size:12px;color:#e5ca87">Registro de decisão orçamentária. Não efetiva desligamento na folha ou na Intranet.</p>'+
+ '<label for="gg-pa-comentario">Comentário / justificativa</label><textarea id="gg-pa-comentario" rows="3" style="width:100%;margin:8px 0 14px;background:#141720;color:#fff;border:1px solid #59637a;border-radius:6px;padding:10px"></textarea>'+
+ '<p id="gg-pa-erro" style="color:#ffb4b4"></p><div class="row" style="gap:8px;flex-wrap:wrap">'+
+ '<button class="btn pri" data-gg-pa-acao="sol_aprovada" data-id="'+esc(id)+'">Aprovar proposta</button>'+
+ '<button class="btn" data-gg-pa-acao="sol_ajuste" data-id="'+esc(id)+'">Devolver para ajustes</button>'+
+ '<button class="btn" data-gg-pa-acao="sol_reprovada" data-id="'+esc(id)+'">Reprovar</button>'+
+ '<button class="btn" data-gg-pa-fechar="1">Fechar</button></div></div>';
+ document.body.appendChild(el);
+}
+document.addEventListener('click',function(e){var t=e.target&&e.target.closest?e.target:null;if(!t)return;var b;
+ if((b=t.closest('[data-gg-pa-refresh]'))){e.stopImmediatePropagation();ultimo=0;ler(true);return;}
+ if((b=t.closest('[data-gg-pa-decidir]'))){e.stopImmediatePropagation();modal(b.getAttribute('data-gg-pa-decidir'));return;}
+ if((b=t.closest('[data-gg-pa-fechar]'))){e.stopImmediatePropagation();fechar();return;}
+ if((b=t.closest('[data-gg-pa-acao]'))){e.stopImmediatePropagation();if(!autorizado())return;
+  var id=b.getAttribute('data-id'),acao=b.getAttribute('data-gg-pa-acao'),comment=(document.getElementById('gg-pa-comentario')||{}).value||'';
+  var aviso=document.getElementById('gg-pa-erro');if(acao!=='sol_aprovada'&&!comment.trim()){aviso.textContent='Justificativa obrigatória.';return;}
+  if(!confirm('Registrar esta decisão orçamentária? A ação será gravada no histórico do Supabase.'))return;
+  b.disabled=true;aviso.textContent='Registrando decisão…';
+  window.SB.rpc('pa_2027_decidir',{p_id:id,p_decisao:acao,p_comentario:comment}).then(function(r){if(r.error)throw Error(r.error.message);fechar();ultimo=0;ler(true);}).catch(function(err){b.disabled=false;aviso.textContent='Falha: '+(err.message||err);});
+ }
+},true);
+/* Atualização sem gravar: visibilidade e retorno à aba; a primeira consulta acontece na renderização. */
+document.addEventListener('visibilitychange',function(){if(!document.hidden&&document.getElementById('gg-pa-fila-real'))ler(true);});
+window.GG_PA_2027={atualizar:function(){ultimo=0;ler(true);},diagnostico:function(){return {estado:estado,pendentes:pendentes().length,total:registros.length,erro:erro};}};
+})();
+</script>
+
 <script type="module" id="auth-sdk">
 import { createClient } from "https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/+esm";
 try {
