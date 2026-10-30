@@ -24492,17 +24492,19 @@ if (typeof APP !== "undefined" && APP) {
     var num=String(val).trim();if(num.indexOf(',')>=0)num=num.replace(/\./g,'').replace(',','.');
     var n=/^\d+(?:\.\d+)?$/.test(num)?Number(num):NaN;
     if(acao!=='devolver'&&(!isFinite(n)||n<0)){alert('Informe o valor da rescisão.');return;}
-    if(acao==='validar'&&!confirm('Autorizar o envio desta solicitação ao Gerente Geral?'))return;
+    if(DESLIG.rhProcessando)return;
     if(acao==='devolver'&&!parecer.trim()){alert('Informe a justificativa para devolver.');return;}
     var p;
     if(acao==='salvar'){
-      if(!window.SB||!window.SB.rpc){alert('Supabase indisponível.');return;}
-      p=window.SB.rpc('pa_2027_rh_salvar_rescisao',{p_id:id,p_rescisao:n,p_comentario:parecer}).then(function(r){return {ok:!r.error,mensagem:r.error?'Não foi possível salvar: '+r.error.message:'Cálculo salvo no RH, sem encaminhar.'};});
+      if(!window.SB||!window.SB.rpc){alert('Serviço temporariamente indisponível. Tente novamente.');return;}
+      p=window.SB.rpc('pa_2027_rh_salvar_rescisao',{p_id:id,p_rescisao:n,p_comentario:parecer}).then(function(r){return {ok:!r.error,mensagem:r.error?'Não foi possível salvar a análise. Tente novamente ou contate o suporte.':'Cálculo salvo no RH, sem encaminhar.'};});
     }else p=acao==='validar'?DESLIG.validar(id,n,parecer):DESLIG.devolver(id,parecer);
-    p.then(function(r){S.rhMensagem={id:id,ok:!!r.ok,texto:r.mensagem||'Operação concluída'};
+    DESLIG.rhProcessando=true;
+    var caixa=document.getElementById('rhDetalheOverlay');if(caixa)caixa.querySelectorAll('[data-rh-salvar],[data-rh-validar],[data-rh-devolver]').forEach(function(b){b.disabled=true;});
+    p.then(function(r){DESLIG.rhProcessando=false;S.rhMensagem={id:id,ok:!!r.ok,texto:r.mensagem||'Operação concluída'};
       if(r.ok){DESLIG.estadoFila='nao-carregada';DESLIG.carregarFila(function(){if(acao!=='salvar'){DESLIG.fecharDetalhe();}else DESLIG.renderDetalhe();if(typeof window.render==='function')window.render();});}
       else DESLIG.renderDetalhe();
-    }).catch(function(e){S.rhMensagem={id:id,ok:false,texto:String(e.message||e)};DESLIG.renderDetalhe();});
+    }).catch(function(e){DESLIG.rhProcessando=false;S.rhMensagem={id:id,ok:false,texto:'Não foi possível concluir a operação. Tente novamente.'};DESLIG.renderDetalhe();});
   };
   document.addEventListener('click',function(ev){
     var t=ev.target;if(!t||!t.closest)return;var a;
@@ -28179,7 +28181,7 @@ var ESP_AGREGADO_DESPESA = {
       if (!confirm('Registrar as propostas de Judô e Musculação no Supabase? Nenhuma rubrica da DRE será alterada.')) return;
       var imp=window.ESPORTES_IMPORT, jobs=[];
       ['judo','musculacao'].forEach(function(m){imp.grupos(m).forEach(function(g){jobs.push(imp.salvar(m,g));});});
-      Promise.all(jobs).then(function(){alert('Propostas de Esportes registradas no Supabase. Recarregue para conferir.');imp.carregar();if(render)render();}).catch(function(e){alert('Importação não concluída: '+(e.message||e));});
+      Promise.all(jobs).then(function(){alert('Propostas de Esportes registradas. Recarregue para conferir.');imp.carregar();if(render)render();}).catch(function(e){alert('Importação não concluída: '+(e.message||e));});
       return;
     }
     if (nome === "salvar") ES.REPO.salvarRascunho();
@@ -29563,7 +29565,7 @@ function atualizarAvisos(){
  alvo.insertBefore(painel,raiz.nextSibling);
  var h=alvo.querySelector('#gg-pa-aviso-decisao');if(h)h.remove();
  var aviso=document.createElement('div');aviso.id='gg-pa-aviso-decisao';aviso.setAttribute('role','status');aviso.style.cssText='border:1px solid '+(fila.length?'#b38b43':'#465271')+';border-radius:9px;padding:12px 16px;margin:8px 0;background:#202431;color:#f5f6fb';
- aviso.innerHTML=fila.length?'<strong>⚠ '+fila.length+' solicitação(ões) aguardando tua decisão</strong> · Confira os pedidos abaixo.':'<strong>Nenhuma solicitação aguardando tua decisão no Supabase.</strong>';
+ aviso.innerHTML=fila.length?'<strong>⚠ '+fila.length+' solicitação(ões) aguardando tua decisão</strong> · Confira os pedidos abaixo.':'<strong>Nenhuma solicitação aguardando tua decisão.</strong>';
  alvo.insertBefore(aviso,raiz);
  // Legacy summary uses a separate in-memory data source; hide its incorrect empty-state when Supabase has pending requests.
  if(fila.length){var todos=alvo.querySelectorAll('*');todos.forEach(function(n){if(n.children.length===0&&/^(Nenhuma decisão pendente|As nove gerências estão sem solicitações registradas\.)$/.test((n.textContent||'').trim())){var card=n.closest('.card')||n.closest('.empty')||n.parentElement;if(card&&card!==alvo&&card!==raiz)card.style.display='none';}});}
@@ -29592,9 +29594,9 @@ document.addEventListener('click',function(e){var t=e.target&&e.target.closest?e
  if((b=t.closest('[data-gg-pa-acao]'))){e.stopImmediatePropagation();if(!autorizado())return;
   var id=b.getAttribute('data-id'),acao=b.getAttribute('data-gg-pa-acao'),comment=(document.getElementById('gg-pa-comentario')||{}).value||'';
   var aviso=document.getElementById('gg-pa-erro');if(acao!=='sol_aprovada'&&!comment.trim()){aviso.textContent='Justificativa obrigatória.';return;}
-  if(!confirm('Registrar esta decisão orçamentária? A ação será gravada no histórico do Supabase.'))return;
+  if(b.disabled)return;
   b.disabled=true;aviso.textContent='Registrando decisão…';
-  window.SB.rpc('pa_2027_decidir',{p_id:id,p_decisao:acao,p_comentario:comment}).then(function(r){if(r.error)throw Error(r.error.message);fechar();ultimo=0;ler(true);}).catch(function(err){b.disabled=false;aviso.textContent='Falha: '+(err.message||err);});
+  window.SB.rpc('pa_2027_decidir',{p_id:id,p_decisao:acao,p_comentario:comment}).then(function(r){if(r.error)throw Error(r.error.message);fechar();ultimo=0;ler(true);}).catch(function(err){b.disabled=false;aviso.textContent='Não foi possível registrar a decisão. Tente novamente ou contate o suporte.';});
  }
 },true);
 /* Atualização sem gravar: visibilidade e retorno à aba; a primeira consulta acontece na renderização. */
@@ -29905,6 +29907,26 @@ function salvar(m,g){
 window.ESPORTES_IMPORT={dados:BASE,carregar:carregar,salvar:salvar,grupos:grupos,registros:pendentes};
 var interval=0;function onReady(){if(++interval>600)return;carregar();if(!iniciado)setTimeout(onReady,1000);}
 setTimeout(onReady,800);
+})();
+</script>
+<script id="sogipa-notificacoes-unificadas">
+(function(){
+  'use strict';
+  var area;
+  function normalizar(m){
+    m=String(m==null?'':m);
+    m=m.replace(/Supabase/gi,'sistema').replace(/\bRPC\b/g,'serviço').replace(/\bSQL\b/g,'serviço');
+    m=m.replace(/\b(?:pa_2027|orc_2027|auth)_[a-z0-9_]+\b/gi,'operação');
+    return m;
+  }
+  function notificar(m,erro){
+    if(!document.body)return;
+    if(!area){area=document.createElement('div');area.id='sogipa-notificacoes';area.setAttribute('role','status');area.setAttribute('aria-live','polite');area.style.cssText='position:fixed;right:20px;top:20px;z-index:2147483646;display:flex;flex-direction:column;gap:10px;max-width:min(440px,calc(100vw - 40px));pointer-events:none';document.body.appendChild(area);}
+    var e=document.createElement('div');e.style.cssText='background:#222738;border:1px solid '+(erro?'#c67b7b':'#4c9a7c')+';color:#fff;border-radius:10px;padding:14px 18px;box-shadow:0 8px 25px #0006;font:500 14px/1.5 system-ui,sans-serif;pointer-events:auto';
+    e.textContent=normalizar(m);area.appendChild(e);setTimeout(function(){e.remove();},6500);
+  }
+  window.SOGIPA_NOTIFICAR=notificar;
+  window.alert=function(m){notificar(m,/erro|falha|inválid|obrigatóri|não foi possível|informe|indisponível/i.test(String(m)));};
 })();
 </script>
 </body>
