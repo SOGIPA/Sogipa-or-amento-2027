@@ -27565,26 +27565,7 @@ var ESP_AGREGADO_DESPESA = {
       esc(m ? m.nome : "—") + (o ? " · " + esc(o.rotulo) : "") + "</b> " + tipoTag +
       "</div></div>";
 
-    /* Seletores só aparecem quando há mais de uma opção. */
-    var mods = ES.modalidades(), origs = m ? ES.origens(m.id) : [];
-    if (mods.length > 1 || origs.length > 1) {
-      out += '<div class="row" style="margin-bottom:14px;flex-wrap:wrap">';
-      if (mods.length > 1) {
-        out += '<select id="espSel" class="pl-in" style="max-width:240px">' +
-          mods.map(function (x) {
-            return '<option value="' + x.id + '"' + (m && x.id === m.id ? " selected" : "") +
-              ">" + esc(x.nome) + "</option>";
-          }).join("") + "</select>";
-      }
-      if (origs.length > 1) {
-        out += '<select id="espOrigSel" class="pl-in" style="max-width:260px">' +
-          origs.map(function (x) {
-            return '<option value="' + x.id + '"' + (o && x.id === o.id ? " selected" : "") +
-              ">" + esc(x.rotulo) + " (" + x.tipo + ")</option>";
-          }).join("") + "</select>";
-      }
-      out += "</div>";
-    }
+    /* Navegação de modalidade e origem realizada pelas pastas laterais. */
     return out;
   }
 
@@ -27620,7 +27601,7 @@ var ESP_AGREGADO_DESPESA = {
     if (!m || !o) return A.vazio("Nenhuma modalidade cadastrada",
       "As matrizes esportivas serão incorporadas conforme a gerência de Esportes concluir cada uma.");
     var b = blocoAtual();
-    var out = contexto() + avisoEscopo() + avisoCobertura() + filtroBloco();
+    var out = contexto() + filtroBloco();
 
     function kpiDe(id) {
       var ind = ES.indById(id);
@@ -27701,7 +27682,7 @@ var ESP_AGREGADO_DESPESA = {
     var m = modAtual(), o = origAtual();
     if (!m || !o) return visao();
     var b = blocoAtual(), autorizado = podeEditar();
-    var out = contexto() + avisoEscopo() + avisoCobertura() + filtroBloco();
+    var out = contexto() + filtroBloco();
 
     if (b.editavel && !autorizado) {
       out += '<div class="pl-prem"><b>Matriz em leitura.</b><span>' + esc(motivoLeitura()) +
@@ -27723,9 +27704,6 @@ var ESP_AGREGADO_DESPESA = {
         '<div class="tw"><table><thead><tr><th>Origem</th><th>Conta</th>'+
         A.MESES.map(function(z){return '<th>'+esc(z)+'</th>';}).join('')+
         '</tr></thead><tbody>'+rows.join('')+'</tbody></table></div>');
-    }
-    if (window.ESP_MATRIZES_PERSISTIDAS !== 6 && window.ESPORTES_IMPORT && window.ESPORTES_IMPORT.grupos && window.AUTH && window.AUTH.carregado && window.AUTH.podeAdministrar && window.AUTH.podeAdministrar()) {
-      out += '<div class="pl-prem"><b>Importação 2027 · planilhas atualizadas</b><span>Importação controlada para o Supabase. Preserva a fonte integral; não altera a DRE nem substitui valores de outras gerências. Clique para registrar os dados de Judô e Musculação.</span><button class="btn pri" data-espacao="importar2027">Importar propostas de Judô e Musculação para o Supabase</button></div><div class="gap"></div>';
     }
 
     var lista = ES.indicadoresDe(m.id, o.id);
