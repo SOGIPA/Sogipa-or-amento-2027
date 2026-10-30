@@ -1853,6 +1853,27 @@ tr.hoverable:hover>td{background:rgba(61,123,255,.06);}
     .pl-leg{gap:10px;}
   }
 
+
+/* SOGIPA 2027 — interface gerencial simplificada: ferramentas de diagnóstico continuam no motor. */
+.subtab[data-aba="premissas"], .subtab[data-estaba="premissas"],
+.subtab[data-dfoaba="premissas"], .subtab[data-chuaba="premissas"],
+.subtab[data-mktaba="premissas"], .subtab[data-aba="confronto"],
+.subtab[data-aba="rastreabilidade"], .subtab[data-aba="pendencia"],
+.subtab[data-espaba="confronto"], .subtab[data-espaba="pendencia"],
+.subtab[data-espaba="dre"], .subtab[data-espaba="fonte"] { display:none !important; }
+</style>
+
+<style id="sogipa-esportes-ux-2027">
+.esp-fonte-scroll{overflow-x:auto;max-width:100%;scrollbar-gutter:stable}
+.esp-fonte-tabela{width:max-content;min-width:100%;border-collapse:separate;border-spacing:0;font-variant-numeric:tabular-nums}
+.esp-fonte-tabela th,.esp-fonte-tabela td{padding:11px 14px;white-space:nowrap;border-bottom:1px solid rgba(160,175,205,.13)}
+.esp-fonte-tabela thead th{position:sticky;top:0;background:#202435;z-index:2}
+.esp-fonte-tabela th:first-child,.esp-fonte-tabela .esp-fonte-conta{position:sticky;left:0;z-index:3;background:#202435;min-width:230px;max-width:330px;white-space:normal;text-align:left}
+.esp-fonte-tabela .esp-fonte-conta{background:#202331;font-weight:550;line-height:1.35}
+.esp-fonte-tabela .esp-fonte-mes,.esp-fonte-tabela .esp-fonte-valor{text-align:right;min-width:112px}
+.esp-fonte-tabela .esp-fonte-valor{font-variant-numeric:tabular-nums;letter-spacing:.01em}
+.esp-fonte-tabela tbody tr:hover td{background:#2a3042}
+.esp-fonte-tabela tbody tr:hover .esp-fonte-conta{background:#2a3042}
 </style>
 </head>
 <body>
@@ -16223,7 +16244,7 @@ window.SOL_ACOES = function (cmd, render) {
     { id: "importacoes", nome: "Importações" },
     { id: "estrutura", nome: "Gerências e CCs" },
     { id: "rubricas", nome: "Rubricas" },
-    { id: "premissas", nome: "Premissas" },
+
     { id: "dissidio", nome: "Dissídio" },
     { id: "eventos", nome: "Catálogo de Eventos" },
     { id: "controles", nome: "Controles" }
@@ -17401,7 +17422,7 @@ window.SOL_ACOES = function (cmd, render) {
       }).join("");
       return;
     }
-    var vis = m.abas.filter(function (t) { return !t.adm || S.modo === "admin"; });
+    var vis = m.abas.filter(function (t) { return (!t.adm || S.modo === "admin") && !/^(premissas|confronto|confronto_pecas|fontes|fonte|rastreabilidade|pendencia|divergencias|origem|substituido)$/i.test(t.id) && !/^(premissas|confronto de (peças|fontes)|rastreabilidade dre|pendência de classificação|origem e divergências|estrutura substituída)$/i.test(t.nome); });
     if (vis.length && !vis.filter(function (t) { return t.id === S.aba; }).length) S.aba = vis[0].id;
     el.innerHTML = vis.length < 2 ? "" :
       vis.map(function (t) {
@@ -18440,11 +18461,12 @@ window.SOL_ACOES = function (cmd, render) {
     { id: "planejamento", nome: "Planejamento Orçamentário" },
     { id: "realizado", nome: "Realizado × Orçado" },
     { id: "historico", nome: "Histórico" },
-    { id: "premissas", nome: "Premissas" }
+
   ];
 
   function render() {
     var aba = S.estAba || "visao";
+    if (aba === "premissas" || aba === "substituido") { aba = "visao"; S.estAba = aba; }
     var out = A.faixaSemFonte();
     out += '<div class="row" style="margin-bottom:18px;flex-wrap:wrap">' +
       ABAS.map(function (x) {
@@ -19196,12 +19218,13 @@ window.SOL_ACOES = function (cmd, render) {
     { id: "planejamento", nome: "Planejamento Orçamentário" },
     { id: "realizado", nome: "Realizado × Orçado" },
     { id: "historico", nome: "Histórico" },
-    { id: "premissas", nome: "Premissas" }
+
   ];
   function contaAtual() { return D.contaById(S.dfoConta) || D.CONTAS[0]; }
 
   function render() {
     var aba = S.dfoAba || "visao";
+    if (aba === "premissas" || aba === "substituido") { aba = "visao"; S.dfoAba = aba; }
     var out = A.faixaSemFonte();
     out += '<div class="row" style="margin-bottom:18px;flex-wrap:wrap">' +
       ABAS.map(function (x) {
@@ -19840,11 +19863,12 @@ window.SOL_ACOES = function (cmd, render) {
     { id: "planejamento", nome: "Planejamento Orçamentário" },
     { id: "realizado", nome: "Realizado × Orçado" },
     { id: "historico", nome: "Histórico" },
-    { id: "premissas", nome: "Premissas" }
+
   ];
 
   function render() {
     var aba = S.chuAba || "visao";
+    if (aba === "premissas" || aba === "substituido") { aba = "visao"; S.chuAba = aba; }
     var out = A.faixaSemFonte();
     out += '<div class="row" style="margin-bottom:18px;flex-wrap:wrap">' +
       ABAS.map(function (x) {
@@ -20862,8 +20886,8 @@ var MKT_PLANO_2027 = {"titulo":"PLANEJAMENTO ORÇAMENTÁRIO DE MARKETING — 202
       { id: "visao", nome: "Visão Geral" },
       { id: "realizado", nome: "Realizado × Orçado" },
       { id: "historico", nome: "Histórico" },
-      { id: "premissas", nome: "Premissas" },
-      { id: "substituido", nome: "Estrutura substituída" }
+
+
     ];
     if (equipe().length) a.splice(4, 0, { id: "quadro", nome: "Quadro Atual" });
     return a;
@@ -27458,13 +27482,11 @@ var ESP_AGREGADO_DESPESA = {
   var A = APP, S = A.state, ES = window.ESPORTES;
   var esc = A.esc, card = A.card, stitle = A.stitle, kpi = A.kpi, fmt = A.fmt, pct = A.pct;
 
+  // Navegação gerencial: os diagnósticos técnicos permanecem no código,
+  // mas não são apresentados como abas de trabalho ao gestor.
   var ABAS = [
-    { id: "visao",     nome: "Visão Geral" },
-    { id: "matriz",    nome: "Matriz Mensal" },
-    { id: "confronto", nome: "Confronto de Fontes" },
-    { id: "pendencia", nome: "Pendência de Classificação" },
-    { id: "dre",       nome: "Rastreabilidade DRE" },
-    { id: "fonte",     nome: "Origem e Divergências" }
+    { id: "visao", nome: "Visão Geral" },
+    { id: "matriz", nome: "Matriz Mensal" }
   ];
 
   function modAtual() {
@@ -27692,17 +27714,18 @@ var ESP_AGREGADO_DESPESA = {
     if(window.ESP_IMPORTADOS){
       var rows=[];
       Object.keys(window.ESP_IMPORTADOS).forEach(function(k){
-        var d=window.ESP_IMPORTADOS[k];
-        if(k.split('|')[0]!==m.id)return;
+        var d=window.ESP_IMPORTADOS[k], partes=k.split('|');
+        // Mostrar apenas a origem da pasta atual; não misturar escopos.
+        if(partes[0]!==m.id || partes[1]!==o.id)return;
         (d.linhas||[]).forEach(function(l){
-          rows.push('<tr><td>'+esc(k.split('|')[1])+'</td><td>'+esc(l.conta)+'</td>'+
-            l.orcado_2027_mensal.map(function(v){return '<td class="num">'+(v===null?'—':fmt(v,2))+'</td>';}).join('')+'</tr>');
+          rows.push('<tr><td class="esp-fonte-conta" title="'+esc(l.conta)+'">'+esc(l.conta)+'</td>'+
+            l.orcado_2027_mensal.map(function(v){return '<td class="esp-fonte-valor">'+(v===null?'—':fmt(v,2))+'</td>';}).join('')+'</tr>');
         });
       });
       if(rows.length)out+=card('Matrizes de Esportes 2027 · registradas no sistema',
         'Judô e Musculação · valores mensais originais · persistência confirmada, sem lançamento automático na DRE',
-        '<div class="tw"><table><thead><tr><th>Origem</th><th>Conta</th>'+
-        A.MESES.map(function(z){return '<th>'+esc(z)+'</th>';}).join('')+
+        '<div class="tw esp-fonte-scroll"><table class="esp-fonte-tabela"><thead><tr><th>Conta</th>'+
+        A.MESES.map(function(z){return '<th class="esp-fonte-mes">'+esc(z)+'</th>';}).join('')+
         '</tr></thead><tbody>'+rows.join('')+'</tbody></table></div>');
     }
 
@@ -28183,7 +28206,7 @@ var ESP_AGREGADO_DESPESA = {
     /* Modo rubrica: o gerente entrou por uma conta da árvore, não pela
        modalidade. A tela responde pela rubrica. */
     if (S.espRubrica) return telaRubrica();
-    var aba = S.espAba || "visao";
+    var aba = (S.espAba === "matriz") ? "matriz" : "visao";
     var out = A.faixaSemFonte();
     out += '<div class="row" style="margin-bottom:18px;flex-wrap:wrap">' +
       ABAS.map(function (x) {
